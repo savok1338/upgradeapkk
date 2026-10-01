@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CS2 Upgrader — Панель Администратора</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@600;700;800&family=Tektur:wght@600;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0c0d10;
+      --card-bg: #14151b;
+      --card-border: #232530;
+      --accent: #e58e26;
+      --accent-glow: rgba(229, 142, 38, 0.25);
+      --green: #2ecc71;
+      --red: #e74c3c;
+      --text: #f0f0f5;
+      --text-muted: #8b8d9c;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(20, 21, 27, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .logo-badge {
+      background: linear-gradient(135deg, #ff9f1a, #e58e26);
+      color: #000;
+      font-family: 'Tektur', sans-serif;
+      font-weight: 900;
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+    }
+    .logo-title {
+      font-family: 'Exo 2', sans-serif;
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: 0.5px;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .nav-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .nav-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+    .nav-btn.active {
+      color: #fff;
+      background: var(--card-bg);
+      border-color: var(--card-border);
+      box-shadow: 0 0 15px rgba(0,0,0,0.5);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--green);
+      background: rgba(46, 204, 113, 0.1);
+      padding: 0.35rem 0.75rem;
+      border-radius: 20px;
+      border: 1px solid rgba(46, 204, 113, 0.25);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+    main {
+      flex: 1;
+      max-width: 1300px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.5;
+    }
+    .stat-lbl { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+    .stat-val { font-family: 'Tektur', sans-serif; font-size: 1.8rem; font-weight: 700; color: #fff; }
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .sec-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .sec-title { font-family: 'Exo 2', sans-serif; font-size: 1.25rem; font-weight: 700; }
+    .search-input {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      min-width: 260px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus { border-color: var(--accent); }
+    .btn-create {
+      background: linear-gradient(135deg, #ff9f1a, #e58e26);
+      color: #000;
+      border: none;
+      padding: 0.55rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-create:hover { opacity: 0.95; transform: translateY(-1px); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.5px;
+    }
+    td { padding: 0.9rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); vertical-align: middle; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .player-cell { display: flex; align-items: center; gap: 0.75rem; }
+    .p-avatar {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: linear-gradient(135deg, #2c3e50, #3498db);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 0.85rem; color: #fff;
+    }
+    .p-nick { font-weight: 600; color: #fff; }
+    .p-id { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
+    .badge {
+      display: inline-block; padding: 0.2rem 0.55rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;
+    }
+    .badge-code { background: rgba(229, 142, 38, 0.15); color: var(--accent); border: 1px solid rgba(229, 142, 38, 0.3); font-family: monospace; font-size: 0.85rem; }
+    .btn-action {
+      background: rgba(255, 255, 255, 0.08); border: 1px solid var(--card-border); color: #fff;
+      padding: 0.35rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-action:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+    .btn-del {
+      background: rgba(231, 76, 60, 0.15); border: 1px solid rgba(231, 76, 60, 0.3); color: var(--red);
+      padding: 0.35rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+    }
+    .btn-del:hover { background: var(--red); color: #fff; }
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px);
+      display: none; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-box {
+      background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px;
+      padding: 2rem; width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 1.25rem;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+    }
+    .modal-title { font-family: 'Exo 2', sans-serif; font-size: 1.25rem; font-weight: 700; }
+    .form-group { display: flex; flex-direction: column; gap: 0.4rem; }
+    .form-group label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+    .form-input {
+      background: rgba(0, 0, 0, 0.4); border: 1px solid var(--card-border); color: #fff;
+      padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.95rem; outline: none;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .modal-btns { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 0.5rem; }
+    .btn-cancel {
+      background: transparent; border: 1px solid var(--card-border); color: var(--text-muted);
+      padding: 0.55rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    }
+    .btn-save {
+      background: linear-gradient(135deg, #ff9f1a, #e58e26); color: #000; border: none;
+      padding: 0.55rem 1.4rem; border-radius: 8px; font-weight: 700; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-wrap">
+      <div class="logo-badge">CS2</div>
+      <div class="logo-title">Upgrader Server Core</div>
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-btn active" id="tabPlayersBtn" onclick="switchTab('players')">База игроков</button>
+      <button class="nav-btn" id="tabPromoBtn" onclick="switchTab('promocodes')">Промокоды</button>
+    </div>
+    <div class="header-actions">
+      <div class="status-badge"><span class="dot"></span> Сервер онлайн</div>
+      <button class="btn-action" onclick="logoutAdmin()">Сменить ключ</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Stats Overview -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-lbl">Всего игроков</span>
+        <span class="stat-val" id="statPlayers">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-lbl">Активных сегодня</span>
+        <span class="stat-val" id="statActive">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-lbl">Суммарный баланс</span>
+        <span class="stat-val" id="statBalance">0 ₽</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-lbl">Всего апгрейдов</span>
+        <span class="stat-val" id="statUpgrades">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-lbl">Активных промокодов</span>
+        <span class="stat-val" id="statPromo">0</span>
+      </div>
+    </div>
+
+    <!-- Tab 1: Players Database -->
+    <div class="section-card" id="playersSection">
+      <div class="sec-top">
+        <h2 class="sec-title">База данных игроков</h2>
+        <input type="text" class="search-input" id="searchPlayer" placeholder="Поиск по нику или ID..." oninput="filterPlayers()">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Игрок</th>
+              <th>Баланс</th>
+              <th>Уровень / XP</th>
+              <th>Апгрейды</th>
+              <th>Винрейт</th>
+              <th>Лучший выигрыш</th>
+              <th>Последний вход</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="playersTbody">
+            <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Загрузка игроков...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab 2: Promo Codes -->
+    <div class="section-card" id="promoSection" style="display: none;">
+      <div class="sec-top">
+        <h2 class="sec-title">Управление промокодами</h2>
+        <button class="btn-create" onclick="openPromoModal()">+ Создать промокод</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Код</th>
+              <th>Сумма (₽)</th>
+              <th>Использовано / Лимит</th>
+              <th>Дата создания</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="promoTbody">
+            <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Загрузка промокодов...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Balance Injection Modal -->
+  <div class="modal-overlay" id="balanceModal">
+    <div class="modal-box">
+      <h3 class="modal-title">Начислить баланс игроку</h3>
+      <div class="form-group">
+        <label>Игрок</label>
+        <input type="text" class="form-input" id="balancePlayerInfo" readonly>
+      </div>
+      <div class="form-group">
+        <label>Сумма начисления (в рублях)</label>
+        <input type="number" class="form-input" id="balanceAmountInput" placeholder="Например: 50000" value="50000">
+      </div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="closeBalanceModal()">Отмена</button>
+        <button class="btn-save" onclick="submitBalanceAdjust()">Начислить монеты</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Promo Modal -->
+  <div class="modal-overlay" id="createPromoModal">
+    <div class="modal-box">
+      <h3 class="modal-title">Создать новый промокод</h3>
+      <div class="form-group">
+        <label>Название промокода</label>
+        <input type="text" class="form-input" id="newPromoCode" placeholder="Например: MEGAWIN" style="text-transform: uppercase;">
+      </div>
+      <div class="form-group">
+        <label>Сумма начисления (в рублях)</label>
+        <input type="number" class="form-input" id="newPromoAmount" placeholder="Например: 10000" value="10000">
+      </div>
+      <div class="form-group">
+        <label>Лимит активаций (0 = безлимитно)</label>
+        <input type="number" class="form-input" id="newPromoLimit" placeholder="0" value="0">
+      </div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="closePromoModal()">Отмена</button>
+        <button class="btn-save" onclick="submitCreatePromo()">Создать код</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let adminKey = localStorage.getItem('cs2_admin_key') || 'savok888'
+    let allPlayers = []
+    let activePlayerId = null
+
+    function getHeaders() {
+      return { 'Content-Type': 'application/json', 'x-admin-key': adminKey }
+    }
+
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/admin/overview', { headers: getHeaders() })
+        if (res.status === 401) {
+          const key = prompt('Введите секретный ключ администратора:')
+          if (key) {
+            adminKey = key.trim()
+            localStorage.setItem('cs2_admin_key', adminKey)
+            loadAll()
+          }
+        } else {
+          loadAll()
+        }
+      } catch (err) {
+        console.error('Auth error', err)
+      }
+    }
+
+    function logoutAdmin() {
+      localStorage.removeItem('cs2_admin_key')
+      adminKey = prompt('Введите новый ключ администратора:') || ''
+      localStorage.setItem('cs2_admin_key', adminKey)
+      loadAll()
+    }
+
+    function switchTab(tab) {
+      document.getElementById('tabPlayersBtn').classList.toggle('active', tab === 'players')
+      document.getElementById('tabPromoBtn').classList.toggle('active', tab === 'promocodes')
+      document.getElementById('playersSection').style.display = tab === 'players' ? 'flex' : 'none'
+      document.getElementById('promoSection').style.display = tab === 'promocodes' ? 'flex' : 'none'
+    }
+
+    async function loadAll() {
+      loadOverview()
+      loadPlayers()
+      loadPromocodes()
+    }
+
+    async function loadOverview() {
+      const res = await fetch('/api/admin/overview', { headers: getHeaders() })
+      if (!res.ok) return
+      const data = await res.json()
+      document.getElementById('statPlayers').textContent = data.playersCount.toLocaleString('ru-RU')
+      document.getElementById('statActive').textContent = data.activeToday.toLocaleString('ru-RU')
+      document.getElementById('statBalance').textContent = Math.round(data.totalBalanceRub).toLocaleString('ru-RU') + ' ₽'
+      document.getElementById('statUpgrades').textContent = data.totalUpgrades.toLocaleString('ru-RU')
+      document.getElementById('statPromo').textContent = data.promoCount.toLocaleString('ru-RU')
+    }
+
+    async function loadPlayers() {
+      const res = await fetch('/api/admin/players', { headers: getHeaders() })
+      if (!res.ok) return
+      allPlayers = await res.json()
+      renderPlayers(allPlayers)
+    }
+
+    function renderPlayers(players) {
+      const tbody = document.getElementById('playersTbody')
+      if (players.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Игроков пока нет. Как только кто-то запустит APK с онлайном, он появится здесь!</td></tr>'
+        return
+      }
+
+      tbody.innerHTML = players.map(p => {
+        const wr = p.upgrades_count > 0 ? ((p.won_count / p.upgrades_count) * 100).toFixed(1) + '%' : '—'
+        const bestWin = (p.biggest_win / 100).toLocaleString('ru-RU') + ' ₽'
+        const balance = (p.balance / 100).toLocaleString('ru-RU') + ' ₽'
+        const lastSeen = new Date(p.last_active).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
+
+        return `
+          <tr>
+            <td>
+              <div class="player-cell">
+                <div class="p-avatar">${(p.nickname || 'CS')[0].toUpperCase()}</div>
+                <div>
+                  <div class="p-nick">${escapeHtml(p.nickname)} ${p.username ? `<span style="color:#e58e26; font-size:0.8rem;">(@${escapeHtml(p.username)})</span>` : ''} ${p.banned ? '<span style="color:var(--red)">(БАН)</span>' : ''}</div>
+                  <div class="p-id">${p.id}</div>
+                </div>
+              </div>
+            </td>
+            <td style="font-weight:700; color:#fff;">${balance}</td>
+            <td><span class="badge" style="background:#2c3e50;">Ур. ${p.level}</span> <span style="font-size:0.8rem; color:var(--text-muted);">(${p.xp} XP)</span></td>
+            <td>${p.upgrades_count}</td>
+            <td>${wr}</td>
+            <td style="color:var(--accent); font-weight:600;">${bestWin}</td>
+            <td style="color:var(--text-muted); font-size:0.8rem;">${lastSeen}</td>
+            <td>
+              <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
+            </td>
+          </tr>
+        `
+      }).join('')
+    }
+
+    function filterPlayers() {
+      const q = document.getElementById('searchPlayer').value.toLowerCase().trim()
+      if (!q) {
+        renderPlayers(allPlayers)
+        return
+      }
+      const filtered = allPlayers.filter(p => p.nickname.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
+      renderPlayers(filtered)
+    }
+
+    async function loadPromocodes() {
+      const res = await fetch('/api/admin/promocodes', { headers: getHeaders() })
+      if (!res.ok) return
+      const codes = await res.json()
+      const tbody = document.getElementById('promoTbody')
+      if (codes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Промокодов пока нет</td></tr>'
+        return
+      }
+
+      tbody.innerHTML = codes.map(c => {
+        const limitStr = c.max_uses === 0 ? 'Безлимитно' : `${c.used_count} / ${c.max_uses}`
+        const dateStr = new Date(c.created_at).toLocaleDateString('ru-RU')
+        const amountStr = (c.amount / 100).toLocaleString('ru-RU') + ' ₽'
+        return `
+          <tr>
+            <td><span class="badge badge-code">${escapeHtml(c.code)}</span></td>
+            <td style="font-weight:700; color:var(--green);">${amountStr}</td>
+            <td>${limitStr}</td>
+            <td style="color:var(--text-muted);">${dateStr}</td>
+            <td>
+              <button class="btn-del" onclick="deletePromo('${c.code}')">Удалить</button>
+            </td>
+          </tr>
+        `
+      }).join('')
+    }
+
+    function openBalanceModal(playerId, nick) {
+      activePlayerId = playerId
+      document.getElementById('balancePlayerInfo').value = `${nick} (${playerId})`
+      document.getElementById('balanceModal').classList.add('open')
+    }
+
+    function closeBalanceModal() {
+      document.getElementById('balanceModal').classList.remove('open')
+      activePlayerId = null
+    }
+
+    async function submitBalanceAdjust() {
+      if (!activePlayerId) return
+      const amountRub = Number(document.getElementById('balanceAmountInput').value)
+      if (isNaN(amountRub) || amountRub === 0) {
+        alert('Введите корректную сумму')
+        return
+      }
+
+      const res = await fetch(`/api/admin/players/${activePlayerId}/balance`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ amountRub })
+      })
+
+      if (res.ok) {
+        closeBalanceModal()
+        loadAll()
+      } else {
+        alert('Ошибка начисления баланса')
+      }
+    }
+
+    function openPromoModal() {
+      document.getElementById('createPromoModal').classList.add('open')
+    }
+
+    function closePromoModal() {
+      document.getElementById('createPromoModal').classList.remove('open')
+    }
+
+    async function submitCreatePromo() {
+      const code = document.getElementById('newPromoCode').value.trim().toUpperCase()
+      const amountRub = Number(document.getElementById('newPromoAmount').value)
+      const maxUses = Number(document.getElementById('newPromoLimit').value) || 0
+
+      if (!code || isNaN(amountRub) || amountRub <= 0) {
+        alert('Заполните название кода и сумму!')
+        return
+      }
+
+      const res = await fetch('/api/admin/promocodes', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ code, amountRub, maxUses })
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        closePromoModal()
+        document.getElementById('newPromoCode').value = ''
+        loadPromocodes()
+        loadOverview()
+      } else {
+        alert(data.error || 'Ошибка создания промокода')
+      }
+    }
+
+    async function deletePromo(code) {
+      if (!confirm(`Удалить промокод ${code}?`)) return
+      await fetch(`/api/admin/promocodes/${code}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      })
+      loadPromocodes()
+      loadOverview()
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]))
+    }
+
+    checkAuth()
+  </script>
+</body>
+</html>
