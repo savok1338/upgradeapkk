@@ -52,6 +52,11 @@ db.exec(`
     details TEXT,
     timestamp INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `)
 
 // Ensure account authentication columns exist for legacy DB migrations
@@ -61,6 +66,39 @@ try { db.exec(`ALTER TABLE players ADD COLUMN auth_token TEXT`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quests_json TEXT DEFAULT '[]'`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quest_stats_json TEXT DEFAULT '{}'`) } catch {}
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username ON players(username)`) } catch {}
+
+export function getAppConfig(key, defaultValue = '') {
+  try {
+    const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(key)
+    return row ? row.value : defaultValue
+  } catch {
+    return defaultValue
+  }
+}
+
+export function setAppConfig(key, value) {
+  try {
+    db.prepare('INSERT INTO app_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value))
+  } catch (e) {
+    console.error('Failed to set app_config', e)
+  }
+}
+
+// Seed default version control config
+const defaultConfigs = [
+  { key: 'min_version_code', value: '33' },
+  { key: 'latest_version_name', value: '3.3' },
+  { key: 'telegram_channel', value: '@upgradermobile' },
+  { key: 'telegram_url', value: 'https://t.me/upgradermobile' },
+  { key: 'update_message', value: 'Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале @upgradermobile.' },
+  { key: 'force_update_enabled', value: '1' }
+]
+
+for (const conf of defaultConfigs) {
+  try {
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run(conf.key, conf.value)
+  } catch {}
+}
 
 // Seed default starter promocodes if none exist
 const countRow = db.prepare('SELECT COUNT(*) as cnt FROM promocodes').get()

@@ -216,6 +216,14 @@
       padding: 0.35rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
     }
     .btn-del:hover { background: var(--red); color: #fff; }
+    .btn-warning {
+      background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.35); color: #f39c12;
+    }
+    .btn-warning:hover { background: #f39c12; color: #000; }
+    .btn-success {
+      background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.35); color: #2ecc71;
+    }
+    .btn-success:hover { background: #2ecc71; color: #000; }
     /* Modal */
     .modal-overlay {
       position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px);
@@ -255,6 +263,7 @@
     <div class="nav-tabs">
       <button class="nav-btn active" id="tabPlayersBtn" onclick="switchTab('players')">База игроков</button>
       <button class="nav-btn" id="tabPromoBtn" onclick="switchTab('promocodes')">Промокоды</button>
+      <button class="nav-btn" id="tabVersionBtn" onclick="switchTab('version')">📲 Версии & Telegram</button>
     </div>
     <div class="header-actions">
       <div class="status-badge"><span class="dot"></span> Сервер онлайн</div>
@@ -335,6 +344,59 @@
             <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Загрузка промокодов...</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Tab 3: Version Control & Telegram -->
+    <div class="section-card" id="versionSection" style="display: none; flex-direction: column; gap: 1.5rem; max-width: 680px;">
+      <div class="sec-top">
+        <h2 class="sec-title">📲 Управление версиями и Telegram-каналом</h2>
+      </div>
+
+      <div style="background: rgba(0, 136, 204, 0.08); border: 1px solid rgba(0, 136, 204, 0.25); border-radius: 10px; padding: 1rem 1.25rem; font-size: 0.88rem; line-height: 1.5; color: #cbd5e0;">
+        💡 <b>Как это работает:</b> При включении принудительного обновления игроки со старыми версиями APK (меньше минимального кода версии) не смогут играть или входить в аккаунт — у них появится экран с требованием обновиться и кнопкой перехода в ваш Telegram канал.
+      </div>
+
+      <div class="form-group" style="flex-direction: row; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; border: 1px solid var(--card-border);">
+        <div>
+          <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Блокировать старые версии (Force Update)</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">Если выключено, старые клиенты смогут подключаться без ограничений</div>
+        </div>
+        <input type="checkbox" id="cfgForceEnabled" style="width: 20px; height: 20px; cursor: pointer; accent-color: #0088cc;" checked>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label>Минимальный код версии (min_version_code)</label>
+          <input type="number" class="form-input" id="cfgMinVersion" value="33" placeholder="33">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Все версии с кодом меньше этого будут заблокированы</span>
+        </div>
+        <div class="form-group">
+          <label>Название актуальной версии</label>
+          <input type="text" class="form-input" id="cfgLatestName" value="3.3" placeholder="3.3">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Отображается в плашке "Новая: v3.3"</span>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label>Имя Telegram канала</label>
+          <input type="text" class="form-input" id="cfgTgChannel" value="@upgradermobile" placeholder="@upgradermobile">
+        </div>
+        <div class="form-group">
+          <label>Ссылка на Telegram канал</label>
+          <input type="text" class="form-input" id="cfgTgUrl" value="https://t.me/upgradermobile" placeholder="https://t.me/upgradermobile">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Текст сообщения для игроков со старой версией</label>
+        <textarea class="form-input" id="cfgUpdateMessage" rows="3" style="resize: vertical;">Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале.</textarea>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem;">
+        <span id="cfgSaveStatus" style="font-size: 0.85rem; font-weight: 600; color: var(--green);"></span>
+        <button class="btn-create" onclick="saveVersionConfig()" style="padding: 0.75rem 1.8rem; font-size: 0.95rem;">💾 Сохранить настройки</button>
       </div>
     </div>
   </main>
@@ -418,14 +480,70 @@
     function switchTab(tab) {
       document.getElementById('tabPlayersBtn').classList.toggle('active', tab === 'players')
       document.getElementById('tabPromoBtn').classList.toggle('active', tab === 'promocodes')
+      document.getElementById('tabVersionBtn').classList.toggle('active', tab === 'version')
       document.getElementById('playersSection').style.display = tab === 'players' ? 'flex' : 'none'
       document.getElementById('promoSection').style.display = tab === 'promocodes' ? 'flex' : 'none'
+      document.getElementById('versionSection').style.display = tab === 'version' ? 'flex' : 'none'
+      if (tab === 'version') loadVersionConfig()
     }
 
     async function loadAll() {
       loadOverview()
       loadPlayers()
       loadPromocodes()
+      loadVersionConfig()
+    }
+
+    async function loadVersionConfig() {
+      try {
+        const res = await fetch('/api/admin/config', { headers: getHeaders() })
+        if (!res.ok) return
+        const cfg = await res.json()
+        if (cfg.min_version_code !== undefined) document.getElementById('cfgMinVersion').value = cfg.min_version_code
+        if (cfg.latest_version_name !== undefined) document.getElementById('cfgLatestName').value = cfg.latest_version_name
+        if (cfg.telegram_channel !== undefined) document.getElementById('cfgTgChannel').value = cfg.telegram_channel
+        if (cfg.telegram_url !== undefined) document.getElementById('cfgTgUrl').value = cfg.telegram_url
+        if (cfg.update_message !== undefined) document.getElementById('cfgUpdateMessage').value = cfg.update_message
+        if (cfg.force_update_enabled !== undefined) document.getElementById('cfgForceEnabled').checked = cfg.force_update_enabled === '1'
+      } catch (e) {
+        console.error('Failed to load version config', e)
+      }
+    }
+
+    async function saveVersionConfig() {
+      const statusEl = document.getElementById('cfgSaveStatus')
+      statusEl.textContent = 'Сохранение...'
+      statusEl.style.color = '#e58e26'
+
+      try {
+        const body = {
+          min_version_code: document.getElementById('cfgMinVersion').value.trim(),
+          latest_version_name: document.getElementById('cfgLatestName').value.trim(),
+          telegram_channel: document.getElementById('cfgTgChannel').value.trim(),
+          telegram_url: document.getElementById('cfgTgUrl').value.trim(),
+          update_message: document.getElementById('cfgUpdateMessage').value.trim(),
+          force_update_enabled: document.getElementById('cfgForceEnabled').checked
+        }
+
+        const res = await fetch('/api/admin/config', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify(body)
+        })
+
+        if (res.ok) {
+          statusEl.textContent = '✅ Настройки версий успешно сохранены!'
+          statusEl.style.color = 'var(--green)'
+          setTimeout(() => { statusEl.textContent = '' }, 4000)
+        } else {
+          const err = await res.json()
+          statusEl.textContent = '❌ Ошибка: ' + (err.error || 'Не удалось сохранить')
+          statusEl.style.color = 'var(--red)'
+        }
+      } catch (e) {
+        statusEl.textContent = '❌ Ошибка сети при сохранении'
+        statusEl.style.color = 'var(--red)'
+      }
     }
 
     async function loadOverview() {
@@ -477,11 +595,48 @@
             <td style="color:var(--accent); font-weight:600;">${bestWin}</td>
             <td style="color:var(--text-muted); font-size:0.8rem;">${lastSeen}</td>
             <td>
-              <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
+              <div style="display:flex; gap:0.4rem; align-items:center;">
+                <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
+                <button class="btn-action ${p.banned ? 'btn-success' : 'btn-warning'}" onclick="toggleBanPlayer('${p.id}', ${p.banned})">${p.banned ? '✅ Разбан' : '🚫 Бан'}</button>
+                <button class="btn-del" onclick="deletePlayer('${p.id}', '${escapeHtml(p.nickname)}')">🗑️</button>
+              </div>
             </td>
           </tr>
         `
       }).join('')
+    }
+
+    async function toggleBanPlayer(id, currentBanned) {
+      const actionName = currentBanned ? 'разблокировать' : 'заблокировать'
+      if (!confirm(`Вы действительно хотите ${actionName} этого игрока?`)) return
+
+      const res = await fetch(`/api/admin/players/${id}/ban`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ banned: !currentBanned })
+      })
+      if (res.ok) {
+        showToast(currentBanned ? '✅ Игрок разблокирован' : '🚫 Игрок заблокирован')
+        loadPlayers()
+      } else {
+        alert('Ошибка при изменении статуса блокировки')
+      }
+    }
+
+    async function deletePlayer(id, nickname) {
+      if (!confirm(`⚠️ ВНИМАНИЕ! Удалить игрока "${nickname}" (${id}) навсегда?\nВсе скины, баланс и уровень будут стёрты безвозвратно.`)) return
+
+      const res = await fetch(`/api/admin/players/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      })
+      if (res.ok) {
+        showToast('🗑️ Игрок успешно удален')
+        loadOverview()
+        loadPlayers()
+      } else {
+        alert('Ошибка при удалении игрока')
+      }
     }
 
     function filterPlayers() {

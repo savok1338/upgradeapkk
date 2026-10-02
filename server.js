@@ -3,7 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { db } from './db.js'
+import { db, getAppConfig, setAppConfig } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -26,23 +26,61 @@ function requireAdmin(req, res, next) {
   next()
 }
 
+// Middleware to enforce minimum client version for outdated APKs
+function checkClientVersion(req, res, next) {
+  const forceEnabled = getAppConfig('force_update_enabled', '1') === '1'
+  if (!forceEnabled) return next()
+
+  const minVersionCode = Number(getAppConfig('min_version_code', '33'))
+  const clientVersion = Number((req.body && req.body.versionCode) || req.headers['x-client-version'] || 0)
+  const telegramChannel = getAppConfig('telegram_channel', '@upgradermobile')
+  const telegramUrl = getAppConfig('telegram_url', 'https://t.me/upgradermobile')
+  const updateMessage = getAppConfig('update_message', `Вышла новая версия CS2 Upgrader! Скачайте обновление в Telegram: ${telegramChannel}`)
+
+  if (clientVersion < minVersionCode) {
+    return res.status(426).json({
+      error: `⚠️ Версия игры устарела! Скачайте обновление в нашем Telegram канале: ${telegramChannel}`,
+      updateRequired: true,
+      minVersionCode,
+      clientVersion,
+      telegramChannel,
+      telegramUrl,
+      updateMessage
+    })
+  }
+  next()
+}
+
 // ----------------------------------------------------
 // PUBLIC / CLIENT API
 // ----------------------------------------------------
 
-// Health check & Server Status
+// Health check, Server Status & Version Control
 app.get('/api/status', (req, res) => {
   const stats = db.prepare('SELECT COUNT(*) as players FROM players').get()
+  const minVersionCode = Number(getAppConfig('min_version_code', '33'))
+  const latestVersionName = getAppConfig('latest_version_name', '3.3')
+  const telegramChannel = getAppConfig('telegram_channel', '@upgradermobile')
+  const telegramUrl = getAppConfig('telegram_url', 'https://t.me/upgradermobile')
+  const updateMessage = getAppConfig('update_message', `Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем Telegram канале: ${telegramChannel}`)
+  const forceUpdateEnabled = getAppConfig('force_update_enabled', '1') === '1'
+
   res.json({
     online: true,
     server: 'CS2 Upgrader Online Core',
     playersCount: stats.players,
+    minVersionCode,
+    latestVersionName,
+    telegramChannel,
+    telegramUrl,
+    updateMessage,
+    forceUpdateEnabled,
     time: Date.now()
   })
 })
 
 // Register new account
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', checkClientVersion, (req, res) => {
   const {
     username,
     password,
@@ -117,7 +155,7 @@ app.post('/api/auth/register', (req, res) => {
 })
 
 // Login to existing account
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', checkClientVersion, (req, res) => {
   const { username, password } = req.body
   if (!username || !password) {
     return res.status(400).json({ error: 'Укажите логин и пароль' })
@@ -171,7 +209,7 @@ app.post('/api/auth/login', (req, res) => {
 })
 
 // Sync player profile from APK
-app.post('/api/player/sync', (req, res) => {
+app.post('/api/player/sync', checkClientVersion, (req, res) => {
   const {
     id,
     nickname = 'Player',
@@ -248,7 +286,7 @@ app.post('/api/player/sync', (req, res) => {
 })
 
 // Redeem Promo Code
-app.post('/api/promocodes/redeem', (req, res) => {
+app.post('/api/promocodes/redeem', checkClientVersion, (req, res) => {
   const { playerId, code } = req.body
   if (!playerId || !code) {
     return res.status(400).json({ error: 'Требуется ID игрока и промокод' })
@@ -385,9 +423,36 @@ app.post('/api/admin/players/:id/balance', requireAdmin, (req, res) => {
 
 // Ban / Unban player
 app.post('/api/admin/players/:id/ban', requireAdmin, (req, res) => {
-  const { banned } = req.body
-  db.prepare('UPDATE players SET banned = ? WHERE id = ?').run(banned ? 1 : 0, req.params.id)
-  res.json({ success: true, playerId: req.params.id, banned: !!banned })
+  const player = db.prepare('SELECT id, nickname, username, banned FROM players WHERE id = ?').get(req.params.id)
+  if (!player) return res.status(404).json({ error: 'Player not found' })
+
+  const newBanned = req.body.banned !== undefined ? (req.body.banned ? 1 : 0) : (player.banned === 1 ? 0 : 1)
+  db.prepare('UPDATE players SET banned = ? WHERE id = ?').run(newBanned, req.params.id)
+
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+    newBanned === 1 ? 'ADMIN_BAN_PLAYER' : 'ADMIN_UNBAN_PLAYER',
+    `${newBanned === 1 ? 'Banned' : 'Unbanned'} player ${player.nickname} (@${player.username || 'guest'}) ID ${req.params.id}`,
+    Date.now()
+  )
+
+  res.json({ success: true, playerId: req.params.id, banned: newBanned === 1 })
+})
+
+// Delete player account permanently
+app.delete('/api/admin/players/:id', requireAdmin, (req, res) => {
+  const player = db.prepare('SELECT id, nickname, username FROM players WHERE id = ?').get(req.params.id)
+  if (!player) return res.status(404).json({ error: 'Player not found' })
+
+  db.prepare('DELETE FROM players WHERE id = ?').run(req.params.id)
+  try { db.prepare('DELETE FROM promocode_redemptions WHERE player_id = ?').run(req.params.id) } catch {}
+
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+    'ADMIN_DELETE_PLAYER',
+    `Permanently deleted player ${player.nickname} (@${player.username || 'guest'}) ID ${req.params.id}`,
+    Date.now()
+  )
+
+  res.json({ success: true, deletedId: req.params.id })
 })
 
 // List Promo Codes
@@ -431,6 +496,31 @@ app.delete('/api/admin/promocodes/:code', requireAdmin, (req, res) => {
   const cleanCode = req.params.code.trim().toUpperCase()
   db.prepare('DELETE FROM promocodes WHERE code = ?').run(cleanCode)
   res.json({ success: true, deletedCode: cleanCode })
+})
+
+// ----------------------------------------------------
+// ADMIN APP CONFIG / VERSION CONTROL
+// ----------------------------------------------------
+
+// Get current version control & system configs
+app.get('/api/admin/config', requireAdmin, (req, res) => {
+  const configs = db.prepare('SELECT key, value FROM app_config').all()
+  const map = {}
+  for (const c of configs) map[c.key] = c.value
+  res.json(map)
+})
+
+// Update version control configs
+app.post('/api/admin/config', requireAdmin, (req, res) => {
+  const { min_version_code, latest_version_name, telegram_channel, telegram_url, update_message, force_update_enabled } = req.body
+  if (min_version_code !== undefined) setAppConfig('min_version_code', min_version_code)
+  if (latest_version_name !== undefined) setAppConfig('latest_version_name', latest_version_name)
+  if (telegram_channel !== undefined) setAppConfig('telegram_channel', telegram_channel)
+  if (telegram_url !== undefined) setAppConfig('telegram_url', telegram_url)
+  if (update_message !== undefined) setAppConfig('update_message', update_message)
+  if (force_update_enabled !== undefined) setAppConfig('force_update_enabled', force_update_enabled ? '1' : '0')
+
+  res.json({ success: true, message: 'Настройки версий успешно обновлены' })
 })
 
 // ----------------------------------------------------
