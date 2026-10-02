@@ -65,6 +65,7 @@ try { db.exec(`ALTER TABLE players ADD COLUMN password_hash TEXT`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN auth_token TEXT`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quests_json TEXT DEFAULT '[]'`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quest_stats_json TEXT DEFAULT '{}'`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN pending_bonus INTEGER DEFAULT 0`) } catch {}
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username ON players(username)`) } catch {}
 
 export function getAppConfig(key, defaultValue = '') {

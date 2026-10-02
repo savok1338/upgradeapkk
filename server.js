@@ -212,14 +212,16 @@ app.post('/api/auth/login', checkClientVersion, (req, res) => {
 app.post('/api/player/sync', checkClientVersion, (req, res) => {
   const {
     id,
-    nickname = 'Player',
+    nickname,
     balance = 750000,
     level = 1,
     xp = 0,
     upgradesCount = 0,
     wonCount = 0,
     biggestWin = 0,
-    inventory = []
+    inventory = [],
+    quests = [],
+    questStats = {}
   } = req.body
 
   if (!id) {
@@ -232,14 +234,19 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
   if (!existing) {
     // Register new player
     db.prepare(`
-      INSERT INTO players (id, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, inventory_json, last_active, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, nickname, balance, level, xp, upgradesCount, wonCount, biggestWin, JSON.stringify(inventory), now, now)
+      INSERT INTO players (
+        id, nickname, balance, level, xp, upgrades_count, won_count, biggest_win,
+        inventory_json, quests_json, quest_stats_json, last_active, created_at, pending_bonus
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(
+      id, nickname || 'Player', balance, level, xp, upgradesCount, wonCount, biggestWin,
+      JSON.stringify(inventory), JSON.stringify(quests), JSON.stringify(questStats), now, now
+    )
 
     return res.json({
       success: true,
       action: 'registered',
-      player: { id, nickname, balance, level, xp }
+      player: { id, nickname: nickname || 'Player', balance, level, xp }
     })
   }
 
@@ -247,10 +254,16 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     return res.status(403).json({ error: 'Player account is suspended by administrator' })
   }
 
-  // If admin granted balance on the server, we preserve server balance bonus if higher
-  const finalBalance = Math.max(existing.balance, balance)
+  // Check if admin granted any pending bonus to this player from admin dashboard
+  let bonusApplied = 0
+  let finalBalance = Number(balance)
+  if (existing.pending_bonus && existing.pending_bonus > 0) {
+    bonusApplied = Number(existing.pending_bonus)
+    finalBalance += bonusApplied
+    db.prepare('UPDATE players SET pending_bonus = 0 WHERE id = ?').run(id)
+  }
 
-  // Update existing player
+  // Update existing player with exact client state (authoritative client progress)
   db.prepare(`
     UPDATE players SET
       nickname = ?,
@@ -261,17 +274,21 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
       won_count = ?,
       biggest_win = ?,
       inventory_json = ?,
+      quests_json = ?,
+      quest_stats_json = ?,
       last_active = ?
     WHERE id = ?
   `).run(
     nickname || existing.nickname,
     finalBalance,
-    Math.max(existing.level, level),
-    Math.max(existing.xp, xp),
-    Math.max(existing.upgrades_count, upgradesCount),
-    Math.max(existing.won_count, wonCount),
-    Math.max(existing.biggest_win, biggestWin),
+    level,
+    xp,
+    upgradesCount,
+    wonCount,
+    biggestWin,
     JSON.stringify(inventory),
+    JSON.stringify(quests),
+    JSON.stringify(questStats),
     now,
     id
   )
@@ -280,8 +297,9 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     success: true,
     action: 'synced',
     balance: finalBalance,
-    level: Math.max(existing.level, level),
-    xp: Math.max(existing.xp, xp)
+    bonusApplied,
+    level,
+    xp
   })
 })
 
@@ -400,11 +418,13 @@ app.post('/api/admin/players/:id/balance', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'Invalid amount' })
   }
 
-  const player = db.prepare('SELECT balance, nickname FROM players WHERE id = ?').get(req.params.id)
+  const player = db.prepare('SELECT balance, pending_bonus, nickname FROM players WHERE id = ?').get(req.params.id)
   if (!player) return res.status(404).json({ error: 'Player not found' })
 
   const newBalance = Math.max(0, player.balance + delta)
-  db.prepare('UPDATE players SET balance = ? WHERE id = ?').run(newBalance, req.params.id)
+  const newPending = (player.pending_bonus || 0) + delta
+
+  db.prepare('UPDATE players SET balance = ?, pending_bonus = ? WHERE id = ?').run(newBalance, newPending, req.params.id)
 
   db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
     'ADMIN_BALANCE_ADJUST',
