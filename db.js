@@ -106,7 +106,10 @@ const defaultConfigs = [
   { key: 'telegram_channel', value: '@upgradermobile' },
   { key: 'telegram_url', value: 'https://t.me/upgradermobile' },
   { key: 'update_message', value: 'Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале @upgradermobile.' },
-  { key: 'force_update_enabled', value: '1' }
+  { key: 'force_update_enabled', value: '1' },
+  // Economy reset marker: clients wipe local+cloud progress once when they see
+  // a value different from their acked one (bump it via admin to reset everyone)
+  { key: 'econ_reset_at', value: String(Date.now()) }
 ]
 
 for (const conf of defaultConfigs) {

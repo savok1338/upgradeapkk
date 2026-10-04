@@ -62,8 +62,9 @@ app.get('/api/status', (req, res) => {
   const latestVersionName = getAppConfig('latest_version_name', '3.3')
   const telegramChannel = getAppConfig('telegram_channel', '@upgradermobile')
   const telegramUrl = getAppConfig('telegram_url', 'https://t.me/upgradermobile')
-  const updateMessage = getAppConfig('update_message', `Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем Telegram канале: ${telegramChannel}`)
+  const updateMessage = getAppConfig('update_message', `Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале: ${telegramChannel}`)
   const forceUpdateEnabled = getAppConfig('force_update_enabled', '1') === '1'
+  const econResetAt = Number(getAppConfig('econ_reset_at', '0'))
 
   res.json({
     online: true,
@@ -75,6 +76,7 @@ app.get('/api/status', (req, res) => {
     telegramUrl,
     updateMessage,
     forceUpdateEnabled,
+    econResetAt,
     time: Date.now()
   })
 })
@@ -187,6 +189,21 @@ app.post('/api/auth/login', checkClientVersion, (req, res) => {
   try { inventory = JSON.parse(player.inventory_json || '[]') } catch {}
   try { quests = JSON.parse(player.quests_json || '[]') } catch {}
   try { questStats = JSON.parse(player.quest_stats_json || '{}') } catch {}
+
+  // Admin edited this player's inventory while they were away — apply the
+  // pending edit at login so it survives no matter what the client pushes later
+  if (player.pending_inventory_json) {
+    try {
+      const pendingInv = JSON.parse(player.pending_inventory_json)
+      if (Array.isArray(pendingInv)) {
+        inventory = pendingInv
+        db.prepare('UPDATE players SET inventory_json = ?, pending_inventory_json = NULL WHERE id = ?')
+          .run(player.pending_inventory_json, player.id)
+      }
+    } catch {
+      db.prepare('UPDATE players SET pending_inventory_json = NULL WHERE id = ?').run(player.id)
+    }
+  }
 
   res.json({
     success: true,
@@ -306,7 +323,8 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     bonusApplied,
     level,
     xp,
-    inventoryOverride
+    inventoryOverride,
+    econResetAt: Number(getAppConfig('econ_reset_at', '0'))
   })
 })
 
@@ -608,13 +626,21 @@ app.get('/api/admin/config', requireAdmin, (req, res) => {
 
 // Update version control configs
 app.post('/api/admin/config', requireAdmin, (req, res) => {
-  const { min_version_code, latest_version_name, telegram_channel, telegram_url, update_message, force_update_enabled } = req.body
+  const { min_version_code, latest_version_name, telegram_channel, telegram_url, update_message, force_update_enabled, econ_reset_at } = req.body
   if (min_version_code !== undefined) setAppConfig('min_version_code', min_version_code)
   if (latest_version_name !== undefined) setAppConfig('latest_version_name', latest_version_name)
   if (telegram_channel !== undefined) setAppConfig('telegram_channel', telegram_channel)
   if (telegram_url !== undefined) setAppConfig('telegram_url', telegram_url)
   if (update_message !== undefined) setAppConfig('update_message', update_message)
   if (force_update_enabled !== undefined) setAppConfig('force_update_enabled', force_update_enabled ? '1' : '0')
+  if (econ_reset_at !== undefined) {
+    setAppConfig('econ_reset_at', String(Number(econ_reset_at) || Date.now()))
+    db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+      'ADMIN_ECON_RESET',
+      `Economy reset marker bumped to ${getAppConfig('econ_reset_at', '0')} — all clients will wipe progress on next sync`,
+      Date.now()
+    )
+  }
 
   res.json({ success: true, message: 'Настройки версий успешно обновлены' })
 })

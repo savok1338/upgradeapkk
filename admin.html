@@ -418,6 +418,13 @@
         <span id="cfgSaveStatus" style="font-size: 0.85rem; font-weight: 600; color: var(--green);"></span>
         <button class="btn-create" onclick="saveVersionConfig()" style="padding: 0.75rem 1.8rem; font-size: 0.95rem;">💾 Сохранить настройки</button>
       </div>
+
+      <div style="background: rgba(231, 76, 60, 0.08); border: 1px solid rgba(231, 76, 60, 0.3); border-radius: 10px; padding: 1rem 1.25rem; font-size: 0.88rem; line-height: 1.5; color: #cbd5e0;">
+        ⚠️ <b>Сброс экономики:</b> после нажатия все игроки при следующем синхронизировании (до 30 секунд) получат чистый старт — пустой инвентарь, баланс 7 500 ₽, статистика и квесты обнулены. Действует на всех устройствах при следующем подключении к серверу.
+        <div style="margin-top: 0.75rem; text-align: right;">
+          <button class="btn-del" onclick="triggerEconReset()" style="padding: 0.55rem 1.2rem;">🔄 Сбросить экономику всем игрокам</button>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -578,6 +585,21 @@
       } catch (e) {
         statusEl.textContent = '❌ Ошибка сети при сохранении'
         statusEl.style.color = 'var(--red)'
+      }
+    }
+
+    async function triggerEconReset() {
+      if (!confirm('⚠️ СБРОС ЭКОНОМИКИ ДЛЯ ВСЕХ ИГРОКОВ!\n\nУ всех игроков обнулится инвентарь, баланс станет 7 500 ₽, статистика и квесты сотрутся. Отменить это нельзя.\n\nПродолжить?')) return
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ econ_reset_at: Date.now() })
+      })
+      if (res.ok) {
+        showToast('🔄 Сброс экономики активирован — применится у всех игроков при следующем синке')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert('Ошибка: ' + (err.error || res.status))
       }
     }
 
