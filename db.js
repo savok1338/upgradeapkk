@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { restoreFromBackup, startBackupScheduler } from './backup.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // DATA_DIR lets the DB live on a mounted persistent disk (e.g. Render Disks: DATA_DIR=/data)
@@ -12,6 +13,17 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'upgrader.db')
+
+// Render free tier has no persistent disk — restore the DB file from the
+// GitHub backup before opening the connection (no-op without GH_BACKUP_TOKEN)
+if (process.env.GH_BACKUP_TOKEN) {
+  try {
+    await restoreFromBackup(dbPath)
+  } catch (e) {
+    console.error('[backup] restore failed, starting with local DB:', e?.message || e)
+  }
+}
+
 export const db = new DatabaseSync(dbPath)
 
 // Initialize schema
@@ -118,3 +130,6 @@ if (countRow.cnt === 0) {
     insertStmt.run(s.code, s.amount, s.max_uses, now)
   }
 }
+
+// Periodic DB snapshots to GitHub + final snapshot on SIGTERM (Render deploys)
+startBackupScheduler(db)
