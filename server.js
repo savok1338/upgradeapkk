@@ -494,6 +494,29 @@ app.post('/api/admin/players/:id/inventory', requireAdmin, (req, res) => {
   })
 })
 
+// Reset a player's password (admin)
+app.post('/api/admin/players/:id/password', requireAdmin, (req, res) => {
+  const { password } = req.body
+  if (!password || String(password).length < 4) {
+    return res.status(400).json({ error: 'Пароль должен быть не менее 4 символов' })
+  }
+
+  const player = db.prepare('SELECT id, nickname, username FROM players WHERE id = ?').get(req.params.id)
+  if (!player) return res.status(404).json({ error: 'Player not found' })
+
+  const passHash = hashPassword(String(password))
+  const token = `tok_${crypto.randomBytes(24).toString('hex')}`
+  db.prepare('UPDATE players SET password_hash = ?, auth_token = ? WHERE id = ?').run(passHash, token, req.params.id)
+
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+    'ADMIN_PASSWORD_RESET',
+    `Password reset for ${player.nickname} (@${player.username || 'guest'}) ID ${req.params.id}; session token rotated`,
+    Date.now()
+  )
+
+  res.json({ success: true, playerId: req.params.id, message: 'Пароль обновлён, старые сессии сброшены' })
+})
+
 // Ban / Unban player
 app.post('/api/admin/players/:id/ban', requireAdmin, (req, res) => {
   const player = db.prepare('SELECT id, nickname, username, banned FROM players WHERE id = ?').get(req.params.id)

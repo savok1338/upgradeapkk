@@ -633,6 +633,7 @@
               <div style="display:flex; gap:0.4rem; align-items:center;">
                 <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
                 <button class="btn-action" onclick="openInventoryModal('${p.id}', '${escapeHtml(p.nickname)}')">🎒 Инвентарь</button>
+                <button class="btn-action" onclick="resetPassword('${p.id}', '${escapeHtml(p.nickname)}')">🔑 Пароль</button>
                 <button class="btn-action ${p.banned ? 'btn-success' : 'btn-warning'}" onclick="toggleBanPlayer('${p.id}', ${p.banned})">${p.banned ? '✅ Разбан' : '🚫 Бан'}</button>
                 <button class="btn-del" onclick="deletePlayer('${p.id}', '${escapeHtml(p.nickname)}')">🗑️</button>
               </div>
@@ -672,6 +673,26 @@
         loadPlayers()
       } else {
         alert('Ошибка при удалении игрока')
+      }
+    }
+
+    async function resetPassword(id, nickname) {
+      const password = prompt(`Новый пароль для "${nickname}" (минимум 4 символа):`)
+      if (!password) return
+      if (password.length < 4) {
+        alert('Пароль должен быть не менее 4 символов')
+        return
+      }
+      const res = await fetch(`/api/admin/players/${id}/password`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ password })
+      })
+      if (res.ok) {
+        showToast(`🔑 Пароль для "${nickname}" обновлён, старые сессии сброшены`)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert('Ошибка сброса пароля: ' + (err.error || res.status))
       }
     }
 
