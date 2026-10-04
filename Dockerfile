@@ -8,7 +8,7 @@ RUN npm install --production
 COPY . .
 
 ENV PORT=3001
-ENV ADMIN_SECRET=savok888
+ENV ADMIN_SECRET=savokadm8
 
 EXPOSE 3001
 

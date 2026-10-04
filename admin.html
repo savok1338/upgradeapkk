@@ -252,6 +252,26 @@
       background: linear-gradient(135deg, #ff9f1a, #e58e26); color: #000; border: none;
       padding: 0.55rem 1.4rem; border-radius: 8px; font-weight: 700; cursor: pointer;
     }
+    /* Inventory modal */
+    .modal-box.wide { max-width: 720px; max-height: 84vh; }
+    .inv-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 0.75rem; overflow-y: auto; max-height: 52vh; padding: 2px;
+    }
+    .inv-item {
+      background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 10px;
+      padding: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: center;
+      position: relative;
+    }
+    .inv-item img { width: 64px; height: 48px; object-fit: contain; }
+    .inv-item .inv-name { font-size: 0.72rem; text-align: center; color: var(--text); line-height: 1.25; min-height: 1.8em; }
+    .inv-item .inv-price { font-size: 0.78rem; color: var(--accent); font-weight: 700; }
+    .inv-del {
+      background: rgba(231, 76, 60, 0.15); border: 1px solid rgba(231, 76, 60, 0.3); color: var(--red);
+      padding: 0.25rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.72rem; font-weight: 600;
+    }
+    .inv-del:hover { background: var(--red); color: #fff; }
+    .inv-empty { color: var(--text-muted); text-align: center; padding: 1.5rem 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -420,6 +440,21 @@
     </div>
   </div>
 
+  <!-- Player Inventory Modal -->
+  <div class="modal-overlay" id="inventoryModal">
+    <div class="modal-box wide">
+      <h3 class="modal-title">🎒 Инвентарь игрока</h3>
+      <div class="form-group">
+        <input type="text" class="form-input" id="inventoryPlayerInfo" readonly>
+      </div>
+      <div class="inv-grid" id="inventoryGrid"></div>
+      <div style="font-size: 0.78rem; color: var(--text-muted);">Удалённые скины исчезнут у игрока при его следующем входе в игру.</div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="closeInventoryModal()">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Create Promo Modal -->
   <div class="modal-overlay" id="createPromoModal">
     <div class="modal-box">
@@ -444,7 +479,7 @@
   </div>
 
   <script>
-    let adminKey = localStorage.getItem('cs2_admin_key') || 'savok888'
+    let adminKey = localStorage.getItem('cs2_admin_key') || 'savokadm8'
     let allPlayers = []
     let activePlayerId = null
 
@@ -597,6 +632,7 @@
             <td>
               <div style="display:flex; gap:0.4rem; align-items:center;">
                 <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
+                <button class="btn-action" onclick="openInventoryModal('${p.id}', '${escapeHtml(p.nickname)}')">🎒 Инвентарь</button>
                 <button class="btn-action ${p.banned ? 'btn-success' : 'btn-warning'}" onclick="toggleBanPlayer('${p.id}', ${p.banned})">${p.banned ? '✅ Разбан' : '🚫 Бан'}</button>
                 <button class="btn-del" onclick="deletePlayer('${p.id}', '${escapeHtml(p.nickname)}')">🗑️</button>
               </div>
@@ -714,6 +750,76 @@
       document.getElementById('createPromoModal').classList.add('open')
     }
 
+    // ---- Player inventory viewer / editor ----
+    let inventoryPlayerId = null
+    let inventoryItems = []
+
+    async function openInventoryModal(playerId, nick) {
+      inventoryPlayerId = playerId
+      document.getElementById('inventoryPlayerInfo').value = `${nick} (${playerId})`
+      document.getElementById('inventoryGrid').innerHTML = '<div class="inv-empty">Загрузка инвентаря...</div>'
+      document.getElementById('inventoryModal').classList.add('open')
+
+      try {
+        const res = await fetch(`/api/admin/players/${playerId}`, { headers: getHeaders() })
+        if (!res.ok) {
+          document.getElementById('inventoryGrid').innerHTML = '<div class="inv-empty">Ошибка загрузки игрока</div>'
+          return
+        }
+        const data = await res.json()
+        inventoryItems = Array.isArray(data.inventory) ? data.inventory : []
+        renderInventory()
+      } catch (e) {
+        document.getElementById('inventoryGrid').innerHTML = '<div class="inv-empty">Ошибка сети</div>'
+      }
+    }
+
+    function renderInventory() {
+      const grid = document.getElementById('inventoryGrid')
+      if (inventoryItems.length === 0) {
+        grid.innerHTML = '<div class="inv-empty">Инвентарь пуст</div>'
+        return
+      }
+      grid.innerHTML = inventoryItems.map((it, idx) => `
+        <div class="inv-item">
+          <img src="${escapeHtml(it.image || '')}" alt="" onerror="this.style.display='none'">
+          <div class="inv-name">${escapeHtml(it.name || 'Скин')}</div>
+          <div class="inv-price">${((it.price || 0) / 100).toLocaleString('ru-RU')} ₽</div>
+          <button class="inv-del" onclick="removeInventoryItem(${idx})">🗑️ Удалить</button>
+        </div>
+      `).join('')
+    }
+
+    async function removeInventoryItem(idx) {
+      if (idx < 0 || idx >= inventoryItems.length) return
+      const item = inventoryItems[idx]
+      if (!confirm(`Удалить "${item.name}" из инвентаря игрока?`)) return
+      inventoryItems.splice(idx, 1)
+      renderInventory()
+      await pushInventoryUpdate()
+    }
+
+    async function pushInventoryUpdate() {
+      if (!inventoryPlayerId) return
+      const res = await fetch(`/api/admin/players/${inventoryPlayerId}/inventory`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ items: inventoryItems })
+      })
+      if (res.ok) {
+        showToast('✅ Инвентарь обновлён — применится при следующем входе игрока')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert('Ошибка сохранения инвентаря: ' + (err.error || res.status))
+      }
+    }
+
+    function closeInventoryModal() {
+      document.getElementById('inventoryModal').classList.remove('open')
+      inventoryPlayerId = null
+      inventoryItems = []
+    }
+
     function closePromoModal() {
       document.getElementById('createPromoModal').classList.remove('open')
     }
@@ -757,6 +863,20 @@
 
     function escapeHtml(str) {
       return (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]))
+    }
+
+    function showToast(text) {
+      let el = document.getElementById('adminToast')
+      if (!el) {
+        el = document.createElement('div')
+        el.id = 'adminToast'
+        el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#14151b;border:1px solid #e58e26;color:#f0f0f5;padding:0.7rem 1.3rem;border-radius:10px;font-size:0.9rem;font-weight:600;z-index:2000;box-shadow:0 10px 30px rgba(0,0,0,0.6);'
+        document.body.appendChild(el)
+      }
+      el.textContent = text
+      el.style.display = 'block'
+      clearTimeout(el._timer)
+      el._timer = setTimeout(() => { el.style.display = 'none' }, 3500)
     }
 
     checkAuth()

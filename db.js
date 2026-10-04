@@ -4,7 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dataDir = path.join(__dirname, 'data')
+// DATA_DIR lets the DB live on a mounted persistent disk (e.g. Render Disks: DATA_DIR=/data)
+const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data')
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true })
@@ -66,6 +67,7 @@ try { db.exec(`ALTER TABLE players ADD COLUMN auth_token TEXT`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quests_json TEXT DEFAULT '[]'`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN quest_stats_json TEXT DEFAULT '{}'`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN pending_bonus INTEGER DEFAULT 0`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN pending_inventory_json TEXT`) } catch {}
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username ON players(username)`) } catch {}
 
 export function getAppConfig(key, defaultValue = '') {

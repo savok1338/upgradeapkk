@@ -8,7 +8,7 @@ import { db, getAppConfig, setAppConfig } from './db.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = process.env.PORT || 3001
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'savok888'
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'savokadm8'
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
@@ -212,6 +212,7 @@ app.post('/api/auth/login', checkClientVersion, (req, res) => {
 app.post('/api/player/sync', checkClientVersion, (req, res) => {
   const {
     id,
+    authToken,
     nickname,
     balance = 750000,
     level = 1,
@@ -232,26 +233,18 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
   const existing = db.prepare('SELECT * FROM players WHERE id = ?').get(id)
 
   if (!existing) {
-    // Register new player
-    db.prepare(`
-      INSERT INTO players (
-        id, nickname, balance, level, xp, upgrades_count, won_count, biggest_win,
-        inventory_json, quests_json, quest_stats_json, last_active, created_at, pending_bonus
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(
-      id, nickname || 'Player', balance, level, xp, upgradesCount, wonCount, biggestWin,
-      JSON.stringify(inventory), JSON.stringify(quests), JSON.stringify(questStats), now, now
-    )
+    // Account was deleted by admin (or never existed) — never resurrect it
+    return res.status(401).json({ error: 'Аккаунт не найден. Авторизуйтесь заново.', logout: true })
+  }
 
-    return res.json({
-      success: true,
-      action: 'registered',
-      player: { id, nickname: nickname || 'Player', balance, level, xp }
-    })
+  // Registered accounts must present their auth token — keeps deleted
+  // accounts deleted and prevents overwriting other players by id
+  if (existing.auth_token && existing.auth_token !== authToken) {
+    return res.status(401).json({ error: 'Сессия недействительна. Авторизуйтесь заново.', logout: true })
   }
 
   if (existing.banned === 1) {
-    return res.status(403).json({ error: 'Player account is suspended by administrator' })
+    return res.status(403).json({ error: 'Аккаунт заблокирован администратором', banned: true })
   }
 
   // Check if admin granted any pending bonus to this player from admin dashboard
@@ -293,13 +286,27 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     id
   )
 
+  // Admin edited this player's inventory — apply it over the client push so the
+  // edit survives, and hand the final list back to the client
+  let inventoryOverride = null
+  if (existing.pending_inventory_json) {
+    try {
+      inventoryOverride = JSON.parse(existing.pending_inventory_json)
+      db.prepare('UPDATE players SET inventory_json = ?, pending_inventory_json = NULL WHERE id = ?')
+        .run(existing.pending_inventory_json, id)
+    } catch {
+      db.prepare('UPDATE players SET pending_inventory_json = NULL WHERE id = ?').run(id)
+    }
+  }
+
   res.json({
     success: true,
     action: 'synced',
     balance: finalBalance,
     bonusApplied,
     level,
-    xp
+    xp,
+    inventoryOverride
   })
 })
 
@@ -381,12 +388,25 @@ app.get('/api/admin/overview', requireAdmin, (req, res) => {
 
 // List all players
 app.get('/api/admin/players', requireAdmin, (req, res) => {
-  const players = db.prepare(`
-    SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at
-    FROM players
-    ORDER BY last_active DESC
-    LIMIT 200
-  `).all()
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+  let players
+  if (q) {
+    const like = `%${q}%`
+    players = db.prepare(`
+      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at
+      FROM players
+      WHERE nickname LIKE ? OR LOWER(username) LIKE LOWER(?) OR id LIKE ?
+      ORDER BY last_active DESC
+      LIMIT 500
+    `).all(like, like, like)
+  } else {
+    players = db.prepare(`
+      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at
+      FROM players
+      ORDER BY last_active DESC
+      LIMIT 500
+    `).all()
+  }
 
   res.json(players)
 })
@@ -438,6 +458,39 @@ app.post('/api/admin/players/:id/balance', requireAdmin, (req, res) => {
     deltaRub: delta / 100,
     newBalanceKopecks: newBalance,
     newBalanceRub: newBalance / 100
+  })
+})
+
+// Set player inventory (admin edit — applied on the player's next sync)
+app.post('/api/admin/players/:id/inventory', requireAdmin, (req, res) => {
+  const { items } = req.body
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: 'Field "items" must be an array' })
+  }
+
+  const player = db.prepare('SELECT id, nickname FROM players WHERE id = ?').get(req.params.id)
+  if (!player) return res.status(404).json({ error: 'Player not found' })
+
+  let serialized
+  try {
+    serialized = JSON.stringify(items)
+  } catch {
+    return res.status(400).json({ error: 'Inventory is not serializable' })
+  }
+
+  db.prepare('UPDATE players SET pending_inventory_json = ? WHERE id = ?').run(serialized, req.params.id)
+
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+    'ADMIN_INVENTORY_EDIT',
+    `Queued inventory edit for ${player.nickname} (${req.params.id}): ${items.length} items (applies on next sync)`,
+    Date.now()
+  )
+
+  res.json({
+    success: true,
+    playerId: req.params.id,
+    itemCount: items.length,
+    message: 'Изменения применятся при следующем входе игрока'
   })
 })
 
