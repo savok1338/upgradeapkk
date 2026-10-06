@@ -70,6 +70,41 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL DEFAULT 'global',
+    sender_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    edited_at INTEGER,
+    deleted_at INTEGER,
+    FOREIGN KEY(sender_id) REFERENCES players(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS wallet_transfers (
+    id TEXT PRIMARY KEY,
+    from_player_id TEXT NOT NULL,
+    to_player_id TEXT NOT NULL,
+    amount INTEGER NOT NULL CHECK(amount > 0),
+    status TEXT NOT NULL DEFAULT 'completed',
+    idempotency_key TEXT UNIQUE,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    FOREIGN KEY(from_player_id) REFERENCES players(id),
+    FOREIGN KEY(to_player_id) REFERENCES players(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id TEXT NOT NULL,
+    transfer_id TEXT,
+    delta INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(player_id) REFERENCES players(id)
+  );
 `)
 
 // Ensure account authentication columns exist for legacy DB migrations
@@ -81,6 +116,15 @@ try { db.exec(`ALTER TABLE players ADD COLUMN quest_stats_json TEXT DEFAULT '{}'
 try { db.exec(`ALTER TABLE players ADD COLUMN pending_bonus INTEGER DEFAULT 0`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN pending_inventory_json TEXT`) } catch {}
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username ON players(username)`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN economy_reset_at INTEGER`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'public'`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN bio TEXT NOT NULL DEFAULT ''`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN avatar_url TEXT`) } catch {}
+try { db.exec(`ALTER TABLE players ADD COLUMN show_inventory INTEGER NOT NULL DEFAULT 0`) } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_players_last_active ON players(last_active)`) } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_channel_created ON chat_messages(channel, created_at)`) } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_wallet_from ON wallet_transfers(from_player_id, created_at)`) } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_wallet_to ON wallet_transfers(to_player_id, created_at)`) } catch {}
 
 export function getAppConfig(key, defaultValue = '') {
   try {
@@ -109,7 +153,8 @@ const defaultConfigs = [
   { key: 'force_update_enabled', value: '1' },
   // Economy reset marker: clients wipe local+cloud progress once when they see
   // a value different from their acked one (bump it via admin to reset everyone)
-  { key: 'econ_reset_at', value: String(Date.now()) }
+  { key: 'econ_reset_at', value: String(Date.now()) },
+  { key: 'admin_secret', value: process.env.ADMIN_SECRET || 'savokadm8' }
 ]
 
 for (const conf of defaultConfigs) {

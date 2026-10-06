@@ -8,7 +8,8 @@ import { db, getAppConfig, setAppConfig } from './db.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = process.env.PORT || 3001
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'savokadm8'
+let ADMIN_SECRET = process.env.ADMIN_SECRET || getAppConfig('admin_secret', 'savokadm8')
+const ONLINE_WINDOW_MS = 90 * 1000
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
@@ -328,6 +329,50 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
   })
 })
 
+// Public player directory and profiles
+app.get('/api/players', (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
+  const like = `%${q}%`
+  const rows = db.prepare(`SELECT id, nickname, level, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url FROM players WHERE banned = 0 AND profile_visibility = 'public' AND (? = '' OR nickname LIKE ? OR id LIKE ?) ORDER BY last_active DESC LIMIT ?`).all(q, like, like, limit)
+  res.json(rows.map(p => ({ ...p, online: Date.now() - p.last_active <= ONLINE_WINDOW_MS })))
+})
+
+app.get('/api/players/:id', (req, res) => {
+  const p = db.prepare('SELECT id, nickname, level, xp, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url, show_inventory, inventory_json FROM players WHERE id = ? AND banned = 0').get(req.params.id)
+  if (!p || p.profile_visibility !== 'public') return res.status(404).json({ error: 'Player not found' })
+  const out = { id: p.id, nickname: p.nickname, level: p.level, xp: p.xp, upgradesCount: p.upgrades_count, wonCount: p.won_count, biggestWin: p.biggest_win, createdAt: p.created_at, online: Date.now() - p.last_active <= ONLINE_WINDOW_MS, bio: p.bio || '', avatarUrl: p.avatar_url || null }
+  if (p.show_inventory) { try { out.inventory = JSON.parse(p.inventory_json || '[]') } catch { out.inventory = [] } }
+  res.json(out)
+})
+
+app.get('/api/leaderboards', (req, res) => {
+  const allowed = { level: 'level', upgrades: 'upgrades_count', wonCount: 'won_count', biggestWin: 'biggest_win' }
+  const column = allowed[req.query.metric] || 'level'
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
+  const rows = db.prepare(`SELECT id, nickname, level, upgrades_count, won_count, biggest_win, ROW_NUMBER() OVER (ORDER BY ${column} DESC, id ASC) AS rank FROM players WHERE banned = 0 ORDER BY ${column} DESC, id ASC LIMIT ?`).all(limit)
+  res.json(rows)
+})
+
+// Player heartbeat / profile update
+app.post('/api/player/heartbeat', (req, res) => {
+  const { id, authToken } = req.body || {}
+  const p = db.prepare('SELECT id FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
+  if (!p) return res.status(401).json({ error: 'Unauthorized' })
+  db.prepare('UPDATE players SET last_active = ? WHERE id = ?').run(Date.now(), id)
+  res.json({ success: true, onlineUntil: Date.now() + ONLINE_WINDOW_MS })
+})
+
+app.patch('/api/player/profile', (req, res) => {
+  const { id, authToken, nickname, bio, avatarUrl, profileVisibility, showInventory } = req.body || {}
+  const p = db.prepare('SELECT id FROM players WHERE id = ? AND auth_token = ?').get(id, authToken)
+  if (!p) return res.status(401).json({ error: 'Unauthorized' })
+  if (nickname !== undefined && (String(nickname).trim().length < 1 || String(nickname).length > 32)) return res.status(400).json({ error: 'Invalid nickname' })
+  const visibility = profileVisibility === 'private' ? 'private' : 'public'
+  db.prepare('UPDATE players SET nickname = COALESCE(?, nickname), bio = COALESCE(?, bio), avatar_url = COALESCE(?, avatar_url), profile_visibility = ?, show_inventory = ? WHERE id = ?').run(nickname === undefined ? null : String(nickname).trim(), bio === undefined ? null : String(bio).slice(0, 280), avatarUrl === undefined ? null : String(avatarUrl).slice(0, 500), visibility, showInventory ? 1 : 0, id)
+  res.json({ success: true })
+})
+
 // Redeem Promo Code
 app.post('/api/promocodes/redeem', checkClientVersion, (req, res) => {
   const { playerId, code } = req.body
@@ -383,6 +428,30 @@ app.post('/api/promocodes/redeem', checkClientVersion, (req, res) => {
   })
 })
 
+// Chat API
+app.get('/api/chat/messages', (req, res) => {
+  const channel = String(req.query.channel || 'global').slice(0, 32)
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
+  const rows = db.prepare('SELECT c.id, c.channel, c.sender_id AS senderId, p.nickname, c.body, c.created_at AS createdAt FROM chat_messages c LEFT JOIN players p ON p.id = c.sender_id WHERE c.channel = ? AND c.deleted_at IS NULL ORDER BY c.id DESC LIMIT ?').all(channel, limit)
+  res.json(rows.reverse())
+})
+app.post('/api/chat/messages', (req, res) => {
+  const { id, authToken, body, channel = 'global' } = req.body || {}
+  const p = db.prepare('SELECT id, nickname FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
+  if (!p) return res.status(401).json({ error: 'Unauthorized' })
+  const text = String(body || '').trim()
+  if (!text || text.length > 500) return res.status(400).json({ error: 'Message must be 1-500 characters' })
+  const now = Date.now()
+  const recent = db.prepare('SELECT COUNT(*) AS c FROM chat_messages WHERE sender_id = ? AND created_at > ?').get(id, now - 10000).c
+  if (recent >= 5) return res.status(429).json({ error: 'Too many messages' })
+  const result = db.prepare('INSERT INTO chat_messages (channel, sender_id, body, created_at) VALUES (?, ?, ?, ?)').run(String(channel).slice(0, 32), id, text, now)
+  res.status(201).json({ id: Number(result.lastInsertRowid), channel, senderId: id, nickname: p.nickname, body: text, createdAt: now })
+})
+app.delete('/api/admin/chat/messages/:id', requireAdmin, (req, res) => {
+  db.prepare('UPDATE chat_messages SET deleted_at = ? WHERE id = ?').run(Date.now(), Number(req.params.id))
+  res.json({ success: true })
+})
+
 // ----------------------------------------------------
 // ADMIN API (Authorized via x-admin-key)
 // ----------------------------------------------------
@@ -411,19 +480,19 @@ app.get('/api/admin/players', requireAdmin, (req, res) => {
   if (q) {
     const like = `%${q}%`
     players = db.prepare(`
-      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at
+      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at, (last_active >= ? ) AS online
       FROM players
-      WHERE nickname LIKE ? OR LOWER(username) LIKE LOWER(?) OR id LIKE ?
+      WHERE (nickname LIKE ? OR LOWER(username) LIKE LOWER(?) OR id LIKE ?)
       ORDER BY last_active DESC
       LIMIT 500
-    `).all(like, like, like)
+    `).all(Date.now() - ONLINE_WINDOW_MS, like, like, like)
   } else {
     players = db.prepare(`
-      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at
+      SELECT id, username, nickname, balance, level, xp, upgrades_count, won_count, biggest_win, banned, last_active, created_at, (last_active >= ?) AS online
       FROM players
       ORDER BY last_active DESC
       LIMIT 500
-    `).all()
+    `).all(Date.now() - ONLINE_WINDOW_MS)
   }
 
   res.json(players)
@@ -535,6 +604,63 @@ app.post('/api/admin/players/:id/password', requireAdmin, (req, res) => {
   res.json({ success: true, playerId: req.params.id, message: 'Пароль обновлён, старые сессии сброшены' })
 })
 
+// Delete selected/all inventory items
+app.post('/api/admin/players/:id/inventory/delete', requireAdmin, (req, res) => {
+  const { itemIds = [], marketNames = [], all = false, confirm = false } = req.body || {}
+  if (all && !confirm) return res.status(400).json({ error: 'confirm=true required for deleting all items' })
+  const p = db.prepare('SELECT id, nickname, inventory_json FROM players WHERE id = ?').get(req.params.id)
+  if (!p) return res.status(404).json({ error: 'Player not found' })
+  let items; try { items = JSON.parse(p.inventory_json || '[]') } catch { items = [] }
+  const ids = new Set(Array.isArray(itemIds) ? itemIds.map(String) : [])
+  const names = new Set(Array.isArray(marketNames) ? marketNames.map(String) : [])
+  const remaining = all ? [] : items.filter(x => !ids.has(String(x?.id)) && !names.has(String(x?.marketName)))
+  const serialized = JSON.stringify(remaining)
+  db.prepare('UPDATE players SET inventory_json = ?, pending_inventory_json = ? WHERE id = ?').run(serialized, serialized, p.id)
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run('ADMIN_INVENTORY_DELETE', `Deleted ${items.length - remaining.length} items from ${p.nickname} (${p.id})`, Date.now())
+  res.json({ success: true, deletedCount: items.length - remaining.length, remainingCount: remaining.length })
+})
+
+// Per-player economy reset
+app.post('/api/admin/players/:id/economy-reset', requireAdmin, (req, res) => {
+  const { confirm = false, initialBalanceKopecks = 750000, clearInventory = true, clearStats = true } = req.body || {}
+  if (!confirm) return res.status(400).json({ error: 'confirm=true required' })
+  const p = db.prepare('SELECT id, nickname FROM players WHERE id = ?').get(req.params.id)
+  if (!p) return res.status(404).json({ error: 'Player not found' })
+  const now = Date.now()
+  const fields = ['balance = ?', 'pending_bonus = 0', 'economy_reset_at = ?', 'pending_inventory_json = NULL']
+  const args = [Math.max(0, Number(initialBalanceKopecks) || 0), now]
+  if (clearStats) { fields.push('level = 1', 'xp = 0', 'upgrades_count = 0', 'won_count = 0', 'biggest_win = 0', "quests_json = '[]'", "quest_stats_json = '{}'") }
+  if (clearInventory) { fields.push("inventory_json = '[]'") }
+  db.prepare(`UPDATE players SET ${fields.join(', ')} WHERE id = ?`).run(...args, p.id)
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run('ADMIN_PLAYER_ECON_RESET', `Reset economy for ${p.nickname} (${p.id})`, now)
+  res.json({ success: true, playerId: p.id, economyResetAt: now })
+})
+
+// Player-to-player transfer (server-authoritative, idempotent)
+app.post('/api/transfers', (req, res) => {
+  const { id, authToken, toPlayerId, amountKopecks, idempotencyKey } = req.body || {}
+  const amount = Math.floor(Number(amountKopecks))
+  if (!idempotencyKey || !toPlayerId || !Number.isSafeInteger(amount) || amount <= 0 || id === toPlayerId) return res.status(400).json({ error: 'Invalid transfer' })
+  const sender = db.prepare('SELECT id, balance FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
+  const recipient = db.prepare('SELECT id FROM players WHERE id = ? AND banned = 0').get(toPlayerId)
+  if (!sender || !recipient) return res.status(401).json({ error: 'Unauthorized or recipient not found' })
+  const old = db.prepare('SELECT * FROM wallet_transfers WHERE idempotency_key = ?').get(String(idempotencyKey))
+  if (old) return res.json({ success: old.status === 'completed', transfer: old })
+  const transferId = `tr_${crypto.randomBytes(12).toString('hex')}`
+  const now = Date.now()
+  try {
+    db.exec('BEGIN IMMEDIATE')
+    const updated = db.prepare('UPDATE players SET balance = balance - ? WHERE id = ? AND balance >= ?').run(amount, id, amount)
+    if (updated.changes !== 1) { db.exec('ROLLBACK'); return res.status(400).json({ error: 'Insufficient balance' }) }
+    db.prepare('UPDATE players SET balance = balance + ? WHERE id = ?').run(amount, toPlayerId)
+    const balances = db.prepare('SELECT id, balance FROM players WHERE id IN (?, ?)').all(id, toPlayerId)
+    db.prepare('INSERT INTO wallet_transfers (id, from_player_id, to_player_id, amount, idempotency_key, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(transferId, id, toPlayerId, amount, String(idempotencyKey), now, now)
+    for (const b of balances) db.prepare('INSERT INTO wallet_transactions (player_id, transfer_id, delta, balance_after, type, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(b.id, transferId, b.id === id ? -amount : amount, b.balance, 'transfer', now)
+    db.exec('COMMIT')
+  } catch (e) { try { db.exec('ROLLBACK') } catch {}; return res.status(500).json({ error: 'Transfer failed' }) }
+  res.status(201).json({ success: true, transferId, amountKopecks: amount })
+})
+
 // Ban / Unban player
 app.post('/api/admin/players/:id/ban', requireAdmin, (req, res) => {
   const player = db.prepare('SELECT id, nickname, username, banned FROM players WHERE id = ?').get(req.params.id)
@@ -626,7 +752,14 @@ app.get('/api/admin/config', requireAdmin, (req, res) => {
 
 // Update version control configs
 app.post('/api/admin/config', requireAdmin, (req, res) => {
-  const { min_version_code, latest_version_name, telegram_channel, telegram_url, update_message, force_update_enabled, econ_reset_at } = req.body
+  const { min_version_code, latest_version_name, telegram_channel, telegram_url, update_message, force_update_enabled, econ_reset_at, admin_password, current_admin_password } = req.body
+  if (admin_password !== undefined) {
+    if (!current_admin_password || hashPassword(String(current_admin_password)) !== hashPassword(ADMIN_SECRET)) return res.status(400).json({ error: 'Неверный текущий пароль администратора' })
+    if (String(admin_password).length < 4) return res.status(400).json({ error: 'Пароль должен быть не менее 4 символов' })
+    ADMIN_SECRET = String(admin_password)
+    setAppConfig('admin_secret', ADMIN_SECRET)
+    return res.json({ success: true, message: 'Пароль администратора обновлён' })
+  }
   if (min_version_code !== undefined) setAppConfig('min_version_code', min_version_code)
   if (latest_version_name !== undefined) setAppConfig('latest_version_name', latest_version_name)
   if (telegram_channel !== undefined) setAppConfig('telegram_channel', telegram_channel)

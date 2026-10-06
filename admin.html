@@ -287,6 +287,7 @@
     </div>
     <div class="header-actions">
       <div class="status-badge"><span class="dot"></span> Сервер онлайн</div>
+      <button class="btn-action" onclick="changeAdminPassword()">🔑 Изменить пароль</button>
       <button class="btn-action" onclick="logoutAdmin()">Сменить ключ</button>
     </div>
   </header>
@@ -455,6 +456,11 @@
         <input type="text" class="form-input" id="inventoryPlayerInfo" readonly>
       </div>
       <div class="inv-grid" id="inventoryGrid"></div>
+      <div style="display:flex; gap:.5rem; margin:.7rem 0; flex-wrap:wrap;">
+        <button class="btn-action" onclick="selectAllInventory()">Выбрать все</button>
+        <button class="btn-action btn-warning" onclick="deleteSelectedInventory()">🗑️ Удалить выбранные</button>
+        <button class="btn-del" onclick="deleteAllInventory()">🗑️ Удалить все скины</button>
+      </div>
       <div style="font-size: 0.78rem; color: var(--text-muted);">Удалённые скины исчезнут у игрока при его следующем входе в игру.</div>
       <div class="modal-btns">
         <button class="btn-cancel" onclick="closeInventoryModal()">Закрыть</button>
@@ -510,6 +516,16 @@
       } catch (err) {
         console.error('Auth error', err)
       }
+    }
+
+    async function changeAdminPassword() {
+      const currentPassword = prompt('Текущий пароль администратора:')
+      if (!currentPassword) return
+      const newPassword = prompt('Новый пароль (минимум 4 символа):')
+      if (!newPassword || newPassword.length < 4) return alert('Пароль должен быть не менее 4 символов')
+      const res = await fetch('/api/admin/config', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ admin_password: newPassword, current_admin_password: currentPassword }) })
+      if (res.ok) { showToast('✅ Пароль администратора обновлён') }
+      else { const err = await res.json().catch(() => ({})); alert(err.error || 'Ошибка изменения пароля') }
     }
 
     function logoutAdmin() {
@@ -655,6 +671,7 @@
               <div style="display:flex; gap:0.4rem; align-items:center;">
                 <button class="btn-action" onclick="openBalanceModal('${p.id}', '${escapeHtml(p.nickname)}')">+ Баланс</button>
                 <button class="btn-action" onclick="openInventoryModal('${p.id}', '${escapeHtml(p.nickname)}')">🎒 Инвентарь</button>
+                <button class="btn-action" onclick="resetPlayerEconomy('${p.id}', '${escapeHtml(p.nickname)}')">🔄 Сброс</button>
                 <button class="btn-action" onclick="resetPassword('${p.id}', '${escapeHtml(p.nickname)}')">🔑 Пароль</button>
                 <button class="btn-action ${p.banned ? 'btn-success' : 'btn-warning'}" onclick="toggleBanPlayer('${p.id}', ${p.banned})">${p.banned ? '✅ Разбан' : '🚫 Бан'}</button>
                 <button class="btn-del" onclick="deletePlayer('${p.id}', '${escapeHtml(p.nickname)}')">🗑️</button>
@@ -663,6 +680,13 @@
           </tr>
         `
       }).join('')
+    }
+
+    async function resetPlayerEconomy(id, nickname) {
+      if (!confirm(`Сбросить экономику игрока «${nickname}»? Баланс станет 7 500 ₽, прогресс и скины будут удалены.`)) return
+      const res = await fetch(`/api/admin/players/${id}/economy-reset`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ confirm: true }) })
+      if (res.ok) { showToast('✅ Экономика игрока сброшена'); loadAll() }
+      else alert('Ошибка сброса экономики')
     }
 
     async function toggleBanPlayer(id, currentBanned) {
@@ -796,6 +820,7 @@
     // ---- Player inventory viewer / editor ----
     let inventoryPlayerId = null
     let inventoryItems = []
+    let selectedInventoryIndexes = new Set()
 
     async function openInventoryModal(playerId, nick) {
       inventoryPlayerId = playerId
@@ -811,6 +836,7 @@
         }
         const data = await res.json()
         inventoryItems = Array.isArray(data.inventory) ? data.inventory : []
+        selectedInventoryIndexes = new Set()
         renderInventory()
       } catch (e) {
         document.getElementById('inventoryGrid').innerHTML = '<div class="inv-empty">Ошибка сети</div>'
@@ -824,13 +850,40 @@
         return
       }
       grid.innerHTML = inventoryItems.map((it, idx) => `
-        <div class="inv-item">
+        <div class="inv-item" onclick="toggleInventorySelection(${idx})" style="cursor:pointer; outline:${selectedInventoryIndexes.has(idx) ? '2px solid var(--accent)' : 'none'};">
           <img src="${escapeHtml(it.image || '')}" alt="" onerror="this.style.display='none'">
           <div class="inv-name">${escapeHtml(it.name || 'Скин')}</div>
           <div class="inv-price">${((it.price || 0) / 100).toLocaleString('ru-RU')} ₽</div>
           <button class="inv-del" onclick="removeInventoryItem(${idx})">🗑️ Удалить</button>
         </div>
       `).join('')
+    }
+
+    function toggleInventorySelection(idx) {
+      if (selectedInventoryIndexes.has(idx)) selectedInventoryIndexes.delete(idx)
+      else selectedInventoryIndexes.add(idx)
+      renderInventory()
+    }
+
+    function selectAllInventory() {
+      selectedInventoryIndexes = new Set(inventoryItems.map((_, i) => i))
+      renderInventory()
+    }
+
+    async function deleteSelectedInventory() {
+      if (!selectedInventoryIndexes.size) return alert('Выберите скины')
+      if (!confirm(`Удалить выбранные скины (${selectedInventoryIndexes.size})?`)) return
+      inventoryItems = inventoryItems.filter((_, i) => !selectedInventoryIndexes.has(i))
+      selectedInventoryIndexes = new Set()
+      renderInventory()
+      await pushInventoryUpdate()
+    }
+
+    async function deleteAllInventory() {
+      if (!inventoryPlayerId || !confirm('Удалить ВСЕ скины игрока?')) return
+      const res = await fetch(`/api/admin/players/${inventoryPlayerId}/inventory/delete`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ all: true, confirm: true }) })
+      if (res.ok) { inventoryItems = []; selectedInventoryIndexes = new Set(); renderInventory(); showToast('✅ Все скины удалены') }
+      else alert('Ошибка удаления всех скинов')
     }
 
     async function removeInventoryItem(idx) {
