@@ -265,13 +265,16 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     return res.status(403).json({ error: 'Аккаунт заблокирован администратором', banned: true })
   }
 
-  // If admin reset this player's economy, wipe client without letting stale client state overwrite DB
+  // If admin reset this player's economy (or global economy), wipe client cleanly without letting stale client state overwrite DB
   const clientEconAck = Number(req.body.econResetAck) || 0
-  if (existing.economy_reset_at && existing.economy_reset_at > clientEconAck) {
+  const globalEconMarker = Number(getAppConfig('econ_reset_at', '0')) || 0
+  const playerEconMarker = Math.max(Number(existing.economy_reset_at) || 0, globalEconMarker)
+
+  if (playerEconMarker > clientEconAck) {
     return res.json({
       success: true,
       action: 'reset',
-      econResetAt: existing.economy_reset_at,
+      econResetAt: playerEconMarker,
       balance: existing.balance,
       bonusApplied: 0,
       level: existing.level,
@@ -340,7 +343,7 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     level,
     xp,
     inventoryOverride,
-    econResetAt: Number(getAppConfig('econ_reset_at', '0'))
+    econResetAt: playerEconMarker
   })
 })
 
