@@ -8,7 +8,7 @@ import { db, getAppConfig, setAppConfig } from './db.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = process.env.PORT || 3001
-let ADMIN_SECRET = process.env.ADMIN_SECRET || getAppConfig('admin_secret', 'savokadm8')
+let ADMIN_SECRET = getAppConfig('admin_secret') || process.env.ADMIN_SECRET || 'savokadm8'
 const ONLINE_WINDOW_MS = 90 * 1000
 
 app.use(cors())
@@ -265,7 +265,22 @@ app.post('/api/player/sync', checkClientVersion, (req, res) => {
     return res.status(403).json({ error: 'Аккаунт заблокирован администратором', banned: true })
   }
 
-  // Check if admin granted any pending bonus to this player from admin dashboard
+  // If admin reset this player's economy, wipe client without letting stale client state overwrite DB
+  const clientEconAck = Number(req.body.econResetAck) || 0
+  if (existing.economy_reset_at && existing.economy_reset_at > clientEconAck) {
+    return res.json({
+      success: true,
+      action: 'reset',
+      econResetAt: existing.economy_reset_at,
+      balance: existing.balance,
+      bonusApplied: 0,
+      level: existing.level,
+      xp: existing.xp,
+      inventoryOverride: []
+    })
+  }
+
+  // Check if admin granted any pending bonus to this player from admin dashboard or received transfers
   let bonusApplied = 0
   let finalBalance = Number(balance)
   if (existing.pending_bonus && existing.pending_bonus > 0) {
@@ -334,24 +349,88 @@ app.get('/api/players', (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
   const like = `%${q}%`
-  const rows = db.prepare(`SELECT id, nickname, level, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url FROM players WHERE banned = 0 AND profile_visibility = 'public' AND (? = '' OR nickname LIKE ? OR id LIKE ?) ORDER BY last_active DESC LIMIT ?`).all(q, like, like, limit)
-  res.json(rows.map(p => ({ ...p, online: Date.now() - p.last_active <= ONLINE_WINDOW_MS })))
+  const rows = db.prepare(`SELECT id, nickname, level, xp, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url, COALESCE(json_array_length(inventory_json), 0) AS skins_count FROM players WHERE banned = 0 AND profile_visibility = 'public' AND (? = '' OR nickname LIKE ? OR id LIKE ?) ORDER BY last_active DESC LIMIT ?`).all(q, like, like, limit)
+  res.json(rows.map(p => ({
+    id: p.id,
+    nickname: p.nickname,
+    level: p.level,
+    xp: p.xp,
+    upgradesCount: p.upgrades_count,
+    wonCount: p.won_count,
+    biggestWin: p.biggest_win,
+    skinsCount: p.skins_count,
+    createdAt: p.created_at,
+    lastActive: p.last_active,
+    online: (Date.now() - p.last_active) <= ONLINE_WINDOW_MS,
+    bio: p.bio || '',
+    avatarUrl: p.avatar_url || null
+  })))
 })
 
+// Public profile: best drop & upgrade stats, NEVER returns balance or inventory of other player
 app.get('/api/players/:id', (req, res) => {
-  const p = db.prepare('SELECT id, nickname, level, xp, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url, show_inventory, inventory_json FROM players WHERE id = ? AND banned = 0').get(req.params.id)
-  if (!p || p.profile_visibility !== 'public') return res.status(404).json({ error: 'Player not found' })
-  const out = { id: p.id, nickname: p.nickname, level: p.level, xp: p.xp, upgradesCount: p.upgrades_count, wonCount: p.won_count, biggestWin: p.biggest_win, createdAt: p.created_at, online: Date.now() - p.last_active <= ONLINE_WINDOW_MS, bio: p.bio || '', avatarUrl: p.avatar_url || null }
-  if (p.show_inventory) { try { out.inventory = JSON.parse(p.inventory_json || '[]') } catch { out.inventory = [] } }
-  res.json(out)
+  const p = db.prepare('SELECT id, nickname, level, xp, upgrades_count, won_count, biggest_win, created_at, last_active, profile_visibility, bio, avatar_url, COALESCE(json_array_length(inventory_json), 0) AS skins_count FROM players WHERE id = ? AND banned = 0').get(req.params.id)
+  if (!p || p.profile_visibility !== 'public') return res.status(404).json({ error: 'Игрок не найден' })
+  res.json({
+    id: p.id,
+    nickname: p.nickname,
+    level: p.level,
+    xp: p.xp,
+    upgradesCount: p.upgrades_count,
+    wonCount: p.won_count,
+    biggestWin: p.biggest_win,
+    skinsCount: p.skins_count,
+    createdAt: p.created_at,
+    lastActive: p.last_active,
+    online: (Date.now() - p.last_active) <= ONLINE_WINDOW_MS,
+    bio: p.bio || '',
+    avatarUrl: p.avatar_url || null
+  })
 })
 
+// Real Leaderboards: supports sorting by balance, skins count, level, upgrades, wins, biggest win
 app.get('/api/leaderboards', (req, res) => {
-  const allowed = { level: 'level', upgrades: 'upgrades_count', wonCount: 'won_count', biggestWin: 'biggest_win' }
-  const column = allowed[req.query.metric] || 'level'
+  const metric = req.query.metric || 'balance'
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
-  const rows = db.prepare(`SELECT id, nickname, level, upgrades_count, won_count, biggest_win, ROW_NUMBER() OVER (ORDER BY ${column} DESC, id ASC) AS rank FROM players WHERE banned = 0 ORDER BY ${column} DESC, id ASC LIMIT ?`).all(limit)
-  res.json(rows)
+  let orderBy = 'balance DESC, id ASC'
+  if (metric === 'skins') {
+    orderBy = 'COALESCE(json_array_length(inventory_json), 0) DESC, id ASC'
+  } else if (metric === 'level') {
+    orderBy = 'level DESC, xp DESC, id ASC'
+  } else if (metric === 'upgrades') {
+    orderBy = 'upgrades_count DESC, id ASC'
+  } else if (metric === 'wonCount') {
+    orderBy = 'won_count DESC, id ASC'
+  } else if (metric === 'biggestWin') {
+    orderBy = 'biggest_win DESC, id ASC'
+  }
+
+  const query = `
+    SELECT
+      id, nickname, level, xp, balance, upgrades_count, won_count, biggest_win,
+      COALESCE(json_array_length(inventory_json), 0) AS skins_count,
+      last_active,
+      ROW_NUMBER() OVER (ORDER BY ${orderBy}) AS rank
+    FROM players
+    WHERE banned = 0
+    ORDER BY ${orderBy}
+    LIMIT ?
+  `
+  const rows = db.prepare(query).all(limit)
+  res.json(rows.map(p => ({
+    id: p.id,
+    nickname: p.nickname,
+    level: p.level,
+    xp: p.xp,
+    balance: p.balance,
+    upgradesCount: p.upgrades_count,
+    wonCount: p.won_count,
+    biggestWin: p.biggest_win,
+    skinsCount: p.skins_count,
+    rank: p.rank,
+    lastActive: p.last_active,
+    online: (Date.now() - p.last_active) <= ONLINE_WINDOW_MS
+  })))
 })
 
 // Player heartbeat / profile update
@@ -428,25 +507,62 @@ app.post('/api/promocodes/redeem', checkClientVersion, (req, res) => {
   })
 })
 
-// Chat API
-app.get('/api/chat/messages', (req, res) => {
+// Chat API (with live sender online status & aliases)
+function getChatMessagesHandler(req, res) {
   const channel = String(req.query.channel || 'global').slice(0, 32)
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
-  const rows = db.prepare('SELECT c.id, c.channel, c.sender_id AS senderId, p.nickname, c.body, c.created_at AS createdAt FROM chat_messages c LEFT JOIN players p ON p.id = c.sender_id WHERE c.channel = ? AND c.deleted_at IS NULL ORDER BY c.id DESC LIMIT ?').all(channel, limit)
-  res.json(rows.reverse())
-})
-app.post('/api/chat/messages', (req, res) => {
-  const { id, authToken, body, channel = 'global' } = req.body || {}
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 60))
+  const rows = db.prepare(`
+    SELECT
+      c.id, c.channel, c.sender_id AS senderId, p.nickname, c.body, c.created_at AS createdAt, p.last_active AS lastActive
+    FROM chat_messages c
+    LEFT JOIN players p ON p.id = c.sender_id
+    WHERE c.channel = ? AND c.deleted_at IS NULL
+    ORDER BY c.id DESC
+    LIMIT ?
+  `).all(channel, limit)
+
+  res.json(rows.reverse().map(m => ({
+    id: m.id,
+    channel: m.channel,
+    senderId: m.senderId,
+    nickname: m.nickname || 'Игрок',
+    body: m.body,
+    text: m.body,
+    createdAt: m.createdAt,
+    online: m.lastActive ? (Date.now() - m.lastActive) <= ONLINE_WINDOW_MS : false
+  })))
+}
+
+function postChatMessageHandler(req, res) {
+  const { id, authToken, body, text, channel = 'global' } = req.body || {}
   const p = db.prepare('SELECT id, nickname FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
-  if (!p) return res.status(401).json({ error: 'Unauthorized' })
-  const text = String(body || '').trim()
-  if (!text || text.length > 500) return res.status(400).json({ error: 'Message must be 1-500 characters' })
+  if (!p) return res.status(401).json({ error: 'Необходима авторизация' })
+  const messageText = String(body || text || '').trim()
+  if (!messageText || messageText.length > 500) return res.status(400).json({ error: 'Длина сообщения от 1 до 500 символов' })
   const now = Date.now()
   const recent = db.prepare('SELECT COUNT(*) AS c FROM chat_messages WHERE sender_id = ? AND created_at > ?').get(id, now - 10000).c
-  if (recent >= 5) return res.status(429).json({ error: 'Too many messages' })
-  const result = db.prepare('INSERT INTO chat_messages (channel, sender_id, body, created_at) VALUES (?, ?, ?, ?)').run(String(channel).slice(0, 32), id, text, now)
-  res.status(201).json({ id: Number(result.lastInsertRowid), channel, senderId: id, nickname: p.nickname, body: text, createdAt: now })
-})
+  if (recent >= 5) return res.status(429).json({ error: 'Слишком частая отправка сообщений' })
+
+  const result = db.prepare('INSERT INTO chat_messages (channel, sender_id, body, created_at) VALUES (?, ?, ?, ?)').run(String(channel).slice(0, 32), id, messageText, now)
+  db.prepare('UPDATE players SET last_active = ? WHERE id = ?').run(now, id)
+
+  res.status(201).json({
+    id: Number(result.lastInsertRowid),
+    channel,
+    senderId: id,
+    nickname: p.nickname,
+    body: messageText,
+    text: messageText,
+    createdAt: now,
+    online: true
+  })
+}
+
+app.get('/api/chat/messages', getChatMessagesHandler)
+app.post('/api/chat/messages', postChatMessageHandler)
+app.get('/api/community/messages', getChatMessagesHandler)
+app.post('/api/community/messages', postChatMessageHandler)
+
 app.delete('/api/admin/chat/messages/:id', requireAdmin, (req, res) => {
   db.prepare('UPDATE chat_messages SET deleted_at = ? WHERE id = ?').run(Date.now(), Number(req.params.id))
   res.json({ success: true })
@@ -637,29 +753,64 @@ app.post('/api/admin/players/:id/economy-reset', requireAdmin, (req, res) => {
 })
 
 // Player-to-player transfer (server-authoritative, idempotent)
-app.post('/api/transfers', (req, res) => {
-  const { id, authToken, toPlayerId, amountKopecks, idempotencyKey } = req.body || {}
-  const amount = Math.floor(Number(amountKopecks))
-  if (!idempotencyKey || !toPlayerId || !Number.isSafeInteger(amount) || amount <= 0 || id === toPlayerId) return res.status(400).json({ error: 'Invalid transfer' })
-  const sender = db.prepare('SELECT id, balance FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
-  const recipient = db.prepare('SELECT id FROM players WHERE id = ? AND banned = 0').get(toPlayerId)
-  if (!sender || !recipient) return res.status(401).json({ error: 'Unauthorized or recipient not found' })
-  const old = db.prepare('SELECT * FROM wallet_transfers WHERE idempotency_key = ?').get(String(idempotencyKey))
-  if (old) return res.json({ success: old.status === 'completed', transfer: old })
+function transferHandler(req, res) {
+  const { id, authToken, toPlayerId, amountKopecks, amountRub, idempotencyKey } = req.body || {}
+  const rawAmount = amountKopecks !== undefined ? Number(amountKopecks) : (Number(amountRub) * 100)
+  const amount = Math.floor(rawAmount)
+  const key = idempotencyKey || `idem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  if (!toPlayerId || !Number.isSafeInteger(amount) || amount <= 0 || id === toPlayerId) {
+    return res.status(400).json({ error: 'Некорректная сумма перевода или получатель' })
+  }
+  const sender = db.prepare('SELECT id, balance, nickname FROM players WHERE id = ? AND auth_token = ? AND banned = 0').get(id, authToken)
+  const recipient = db.prepare('SELECT id, nickname FROM players WHERE id = ? AND banned = 0').get(toPlayerId)
+  if (!sender) return res.status(401).json({ error: 'Сессия недействительна' })
+  if (!recipient) return res.status(404).json({ error: 'Получатель не найден' })
+  if (sender.balance < amount) return res.status(400).json({ error: 'Недостаточно средств на балансе' })
+
+  const old = db.prepare('SELECT * FROM wallet_transfers WHERE idempotency_key = ?').get(String(key))
+  if (old) {
+    return res.json({
+      success: old.status === 'completed',
+      transfer: old,
+      balanceKopecks: sender.balance,
+      message: 'Перевод уже был обработан'
+    })
+  }
+
   const transferId = `tr_${crypto.randomBytes(12).toString('hex')}`
   const now = Date.now()
   try {
     db.exec('BEGIN IMMEDIATE')
-    const updated = db.prepare('UPDATE players SET balance = balance - ? WHERE id = ? AND balance >= ?').run(amount, id, amount)
-    if (updated.changes !== 1) { db.exec('ROLLBACK'); return res.status(400).json({ error: 'Insufficient balance' }) }
-    db.prepare('UPDATE players SET balance = balance + ? WHERE id = ?').run(amount, toPlayerId)
+    const updated = db.prepare('UPDATE players SET balance = balance - ?, last_active = ? WHERE id = ? AND balance >= ?').run(amount, now, id, amount)
+    if (updated.changes !== 1) {
+      db.exec('ROLLBACK')
+      return res.status(400).json({ error: 'Недостаточно средств на балансе' })
+    }
+    // Credit recipient balance AND bump pending_bonus so recipient's next client sync preserves the transfer
+    db.prepare('UPDATE players SET balance = balance + ?, pending_bonus = pending_bonus + ? WHERE id = ?').run(amount, amount, toPlayerId)
     const balances = db.prepare('SELECT id, balance FROM players WHERE id IN (?, ?)').all(id, toPlayerId)
-    db.prepare('INSERT INTO wallet_transfers (id, from_player_id, to_player_id, amount, idempotency_key, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(transferId, id, toPlayerId, amount, String(idempotencyKey), now, now)
-    for (const b of balances) db.prepare('INSERT INTO wallet_transactions (player_id, transfer_id, delta, balance_after, type, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(b.id, transferId, b.id === id ? -amount : amount, b.balance, 'transfer', now)
+    db.prepare('INSERT INTO wallet_transfers (id, from_player_id, to_player_id, amount, idempotency_key, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(transferId, id, toPlayerId, amount, String(key), now, now)
+    for (const b of balances) {
+      db.prepare('INSERT INTO wallet_transactions (player_id, transfer_id, delta, balance_after, type, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(b.id, transferId, b.id === id ? -amount : amount, b.balance, 'transfer', now)
+    }
     db.exec('COMMIT')
-  } catch (e) { try { db.exec('ROLLBACK') } catch {}; return res.status(500).json({ error: 'Transfer failed' }) }
-  res.status(201).json({ success: true, transferId, amountKopecks: amount })
-})
+  } catch (e) {
+    try { db.exec('ROLLBACK') } catch {}
+    return res.status(500).json({ error: 'Ошибка перевода средств' })
+  }
+
+  const senderNewBalance = db.prepare('SELECT balance FROM players WHERE id = ?').get(id).balance
+  res.status(201).json({
+    success: true,
+    transferId,
+    amountKopecks: amount,
+    balanceKopecks: senderNewBalance,
+    message: `Успешно переведено ${(amount / 100).toLocaleString('ru-RU')} ₽ игроку ${recipient.nickname}!`
+  })
+}
+
+app.post('/api/transfers', transferHandler)
+app.post('/api/player/transfer', transferHandler)
 
 // Ban / Unban player
 app.post('/api/admin/players/:id/ban', requireAdmin, (req, res) => {

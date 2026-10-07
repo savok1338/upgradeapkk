@@ -524,8 +524,14 @@
       const newPassword = prompt('Новый пароль (минимум 4 символа):')
       if (!newPassword || newPassword.length < 4) return alert('Пароль должен быть не менее 4 символов')
       const res = await fetch('/api/admin/config', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ admin_password: newPassword, current_admin_password: currentPassword }) })
-      if (res.ok) { showToast('✅ Пароль администратора обновлён') }
-      else { const err = await res.json().catch(() => ({})); alert(err.error || 'Ошибка изменения пароля') }
+      if (res.ok) {
+        adminKey = newPassword
+        localStorage.setItem('cs2_admin_key', newPassword)
+        showToast('✅ Пароль администратора обновлён')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || 'Ошибка изменения пароля')
+      }
     }
 
     function logoutAdmin() {
@@ -656,7 +662,15 @@
               <div class="player-cell">
                 <div class="p-avatar">${(p.nickname || 'CS')[0].toUpperCase()}</div>
                 <div>
-                  <div class="p-nick">${escapeHtml(p.nickname)} ${p.username ? `<span style="color:#e58e26; font-size:0.8rem;">(@${escapeHtml(p.username)})</span>` : ''} ${p.banned ? '<span style="color:var(--red)">(БАН)</span>' : ''}</div>
+                  <div class="p-nick" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span>${escapeHtml(p.nickname)}</span>
+                    ${p.online
+                      ? '<span class="status-badge" style="background:rgba(46,204,113,0.15); color:#2ecc71; border:1px solid rgba(46,204,113,0.35); padding:2px 7px; border-radius:12px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><span class="dot" style="background:#2ecc71; width:6px; height:6px; border-radius:50%; box-shadow:0 0 6px #2ecc71;"></span> Онлайн</span>'
+                      : '<span style="color:var(--text-muted); font-size:0.72rem;">⚪ Офлайн</span>'
+                    }
+                    ${p.username ? `<span style="color:#e58e26; font-size:0.8rem;">(@${escapeHtml(p.username)})</span>` : ''}
+                    ${p.banned ? '<span style="color:var(--red); font-size:0.8rem; font-weight:700;">(БАН)</span>' : ''}
+                  </div>
                   <div class="p-id">${p.id}</div>
                 </div>
               </div>
@@ -854,7 +868,7 @@
           <img src="${escapeHtml(it.image || '')}" alt="" onerror="this.style.display='none'">
           <div class="inv-name">${escapeHtml(it.name || 'Скин')}</div>
           <div class="inv-price">${((it.price || 0) / 100).toLocaleString('ru-RU')} ₽</div>
-          <button class="inv-del" onclick="removeInventoryItem(${idx})">🗑️ Удалить</button>
+          <button class="inv-del" onclick="event.stopPropagation(); removeInventoryItem(${idx})">🗑️ Удалить</button>
         </div>
       `).join('')
     }
