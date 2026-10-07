@@ -145,8 +145,8 @@ export function setAppConfig(key, value) {
 
 // Seed default version control config
 const defaultConfigs = [
-  { key: 'min_version_code', value: '33' },
-  { key: 'latest_version_name', value: '3.3' },
+  { key: 'min_version_code', value: '35' },
+  { key: 'latest_version_name', value: '3.5' },
   { key: 'telegram_channel', value: '@upgradermobile' },
   { key: 'telegram_url', value: 'https://t.me/upgradermobile' },
   { key: 'update_message', value: 'Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале @upgradermobile.' },

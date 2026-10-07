@@ -32,7 +32,7 @@ function checkClientVersion(req, res, next) {
   const forceEnabled = getAppConfig('force_update_enabled', '1') === '1'
   if (!forceEnabled) return next()
 
-  const minVersionCode = Number(getAppConfig('min_version_code', '33'))
+  const minVersionCode = Number(getAppConfig('min_version_code', '35'))
   const clientVersion = Number((req.body && req.body.versionCode) || req.headers['x-client-version'] || 0)
   const telegramChannel = getAppConfig('telegram_channel', '@upgradermobile')
   const telegramUrl = getAppConfig('telegram_url', 'https://t.me/upgradermobile')
@@ -59,8 +59,8 @@ function checkClientVersion(req, res, next) {
 // Health check, Server Status & Version Control
 app.get('/api/status', (req, res) => {
   const stats = db.prepare('SELECT COUNT(*) as players FROM players').get()
-  const minVersionCode = Number(getAppConfig('min_version_code', '33'))
-  const latestVersionName = getAppConfig('latest_version_name', '3.3')
+  const minVersionCode = Number(getAppConfig('min_version_code', '35'))
+  const latestVersionName = getAppConfig('latest_version_name', '3.5')
   const telegramChannel = getAppConfig('telegram_channel', '@upgradermobile')
   const telegramUrl = getAppConfig('telegram_url', 'https://t.me/upgradermobile')
   const updateMessage = getAppConfig('update_message', `Вышла новая версия CS2 Upgrader! Скачайте обновление в нашем официальном Telegram канале: ${telegramChannel}`)

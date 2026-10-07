@@ -259,9 +259,28 @@
       gap: 0.75rem; overflow-y: auto; max-height: 52vh; padding: 2px;
     }
     .inv-item {
-      background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 10px;
+      background: rgba(0,0,0,0.3); border: 2px solid var(--card-border); border-radius: 10px;
       padding: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: center;
-      position: relative;
+      position: relative; cursor: pointer; transition: all 0.15s ease-in-out; user-select: none;
+    }
+    .inv-item:hover {
+      border-color: rgba(229, 142, 38, 0.5);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .inv-item.selected {
+      border-color: #ffd152 !important;
+      background: rgba(229, 142, 38, 0.22) !important;
+      box-shadow: 0 0 16px rgba(255, 209, 82, 0.45), inset 0 0 10px rgba(255, 209, 82, 0.15) !important;
+      transform: translateY(-2px);
+    }
+    .inv-check-badge {
+      position: absolute; top: 6px; right: 6px;
+      width: 22px; height: 22px; border-radius: 6px;
+      background: #ffd152; color: #000;
+      font-weight: 900; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+      pointer-events: none;
     }
     .inv-item img { width: 64px; height: 48px; object-fit: contain; }
     .inv-item .inv-name { font-size: 0.72rem; text-align: center; color: var(--text); line-height: 1.25; min-height: 1.8em; }
@@ -389,13 +408,13 @@
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
         <div class="form-group">
           <label>Минимальный код версии (min_version_code)</label>
-          <input type="number" class="form-input" id="cfgMinVersion" value="33" placeholder="33">
+          <input type="number" class="form-input" id="cfgMinVersion" value="35" placeholder="35">
           <span style="font-size: 0.75rem; color: var(--text-muted);">Все версии с кодом меньше этого будут заблокированы</span>
         </div>
         <div class="form-group">
           <label>Название актуальной версии</label>
-          <input type="text" class="form-input" id="cfgLatestName" value="3.3" placeholder="3.3">
-          <span style="font-size: 0.75rem; color: var(--text-muted);">Отображается в плашке "Новая: v3.3"</span>
+          <input type="text" class="form-input" id="cfgLatestName" value="3.5" placeholder="3.5">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Отображается в плашке "Новая: v3.5"</span>
         </div>
       </div>
 
@@ -863,14 +882,18 @@
         grid.innerHTML = '<div class="inv-empty">Инвентарь пуст</div>'
         return
       }
-      grid.innerHTML = inventoryItems.map((it, idx) => `
-        <div class="inv-item" onclick="toggleInventorySelection(${idx})" style="cursor:pointer; outline:${selectedInventoryIndexes.has(idx) ? '2px solid var(--accent)' : 'none'};">
-          <img src="${escapeHtml(it.image || '')}" alt="" onerror="this.style.display='none'">
-          <div class="inv-name">${escapeHtml(it.name || 'Скин')}</div>
-          <div class="inv-price">${((it.price || 0) / 100).toLocaleString('ru-RU')} ₽</div>
-          <button class="inv-del" onclick="event.stopPropagation(); removeInventoryItem(${idx})">🗑️ Удалить</button>
-        </div>
-      `).join('')
+      grid.innerHTML = inventoryItems.map((it, idx) => {
+        const isSel = selectedInventoryIndexes.has(idx)
+        return `
+          <div class="inv-item ${isSel ? 'selected' : ''}" onclick="toggleInventorySelection(${idx})">
+            ${isSel ? '<span class="inv-check-badge">✓</span>' : ''}
+            <img src="${escapeHtml(it.image || '')}" alt="" onerror="this.style.display='none'">
+            <div class="inv-name">${escapeHtml(it.name || 'Скин')}</div>
+            <div class="inv-price">${((it.price || 0) / 100).toLocaleString('ru-RU')} ₽</div>
+            <button class="inv-del" onclick="event.stopPropagation(); removeInventoryItem(${idx})">🗑️ Удалить</button>
+          </div>
+        `
+      }).join('')
     }
 
     function toggleInventorySelection(idx) {
