@@ -91,6 +91,7 @@ db.exec(`
     idempotency_key TEXT UNIQUE,
     created_at INTEGER NOT NULL,
     completed_at INTEGER,
+    comment TEXT,
     FOREIGN KEY(from_player_id) REFERENCES players(id),
     FOREIGN KEY(to_player_id) REFERENCES players(id)
   );
@@ -121,6 +122,7 @@ try { db.exec(`ALTER TABLE players ADD COLUMN profile_visibility TEXT NOT NULL D
 try { db.exec(`ALTER TABLE players ADD COLUMN bio TEXT NOT NULL DEFAULT ''`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN avatar_url TEXT`) } catch {}
 try { db.exec(`ALTER TABLE players ADD COLUMN show_inventory INTEGER NOT NULL DEFAULT 0`) } catch {}
+try { db.exec(`ALTER TABLE wallet_transfers ADD COLUMN comment TEXT`) } catch {}
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_players_last_active ON players(last_active)`) } catch {}
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_channel_created ON chat_messages(channel, created_at)`) } catch {}
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_wallet_from ON wallet_transfers(from_player_id, created_at)`) } catch {}

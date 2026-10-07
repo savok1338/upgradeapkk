@@ -401,7 +401,7 @@ app.get('/api/leaderboards', (req, res) => {
     orderBy = 'upgrades_count DESC, id ASC'
   } else if (metric === 'wonCount') {
     orderBy = 'won_count DESC, id ASC'
-  } else if (metric === 'biggestWin') {
+  } else if (metric === 'biggestWin' || metric === 'drop') {
     orderBy = 'biggest_win DESC, id ASC'
   }
 
@@ -754,9 +754,10 @@ app.post('/api/admin/players/:id/economy-reset', requireAdmin, (req, res) => {
 
 // Player-to-player transfer (server-authoritative, idempotent)
 function transferHandler(req, res) {
-  const { id, authToken, toPlayerId, amountKopecks, amountRub, idempotencyKey } = req.body || {}
+  const { id, authToken, toPlayerId, amountKopecks, amountRub, idempotencyKey, comment } = req.body || {}
   const rawAmount = amountKopecks !== undefined ? Number(amountKopecks) : (Number(amountRub) * 100)
   const amount = Math.floor(rawAmount)
+  const cleanComment = typeof comment === 'string' ? comment.trim().slice(0, 120) : null
   const key = idempotencyKey || `idem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
   if (!toPlayerId || !Number.isSafeInteger(amount) || amount <= 0 || id === toPlayerId) {
     return res.status(400).json({ error: 'Некорректная сумма перевода или получатель' })
@@ -789,7 +790,7 @@ function transferHandler(req, res) {
     // Credit recipient balance AND bump pending_bonus so recipient's next client sync preserves the transfer
     db.prepare('UPDATE players SET balance = balance + ?, pending_bonus = pending_bonus + ? WHERE id = ?').run(amount, amount, toPlayerId)
     const balances = db.prepare('SELECT id, balance FROM players WHERE id IN (?, ?)').all(id, toPlayerId)
-    db.prepare('INSERT INTO wallet_transfers (id, from_player_id, to_player_id, amount, idempotency_key, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(transferId, id, toPlayerId, amount, String(key), now, now)
+    db.prepare('INSERT INTO wallet_transfers (id, from_player_id, to_player_id, amount, idempotency_key, created_at, completed_at, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(transferId, id, toPlayerId, amount, String(key), now, now, cleanComment)
     for (const b of balances) {
       db.prepare('INSERT INTO wallet_transactions (player_id, transfer_id, delta, balance_after, type, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(b.id, transferId, b.id === id ? -amount : amount, b.balance, 'transfer', now)
     }
@@ -804,6 +805,7 @@ function transferHandler(req, res) {
     success: true,
     transferId,
     amountKopecks: amount,
+    comment: cleanComment,
     balanceKopecks: senderNewBalance,
     message: `Успешно переведено ${(amount / 100).toLocaleString('ru-RU')} ₽ игроку ${recipient.nickname}!`
   })
@@ -811,6 +813,51 @@ function transferHandler(req, res) {
 
 app.post('/api/transfers', transferHandler)
 app.post('/api/player/transfer', transferHandler)
+
+// Player notifications: list transfers and alerts
+app.get('/api/player/notifications', (req, res) => {
+  const id = req.query.id || req.headers['x-player-id']
+  const authToken = req.query.authToken || req.headers['x-auth-token']
+  if (!id) {
+    return res.status(400).json({ error: 'Missing player id' })
+  }
+  const player = db.prepare('SELECT id FROM players WHERE id = ?').get(id)
+  if (!player) {
+    return res.status(404).json({ error: 'Игрок не найден' })
+  }
+
+  const rows = db.prepare(`
+    SELECT
+      t.id,
+      t.from_player_id AS fromPlayerId,
+      t.to_player_id AS toPlayerId,
+      p_from.nickname AS fromNickname,
+      p_to.nickname AS toNickname,
+      t.amount AS amountKopecks,
+      t.comment,
+      t.created_at AS createdAt
+    FROM wallet_transfers t
+    LEFT JOIN players p_from ON p_from.id = t.from_player_id
+    LEFT JOIN players p_to ON p_to.id = t.to_player_id
+    WHERE t.from_player_id = ? OR t.to_player_id = ?
+    ORDER BY t.created_at DESC
+    LIMIT 60
+  `).all(id, id)
+
+  res.json(rows.map(r => ({
+    id: r.id,
+    type: 'transfer',
+    isIncoming: r.toPlayerId === id,
+    fromPlayerId: r.fromPlayerId,
+    fromNickname: r.fromNickname || 'Игрок',
+    toPlayerId: r.toPlayerId,
+    toNickname: r.toNickname || 'Игрок',
+    amountKopecks: r.amountKopecks,
+    amountRub: r.amountKopecks / 100,
+    comment: r.comment || '',
+    createdAt: r.createdAt
+  })))
+})
 
 // Ban / Unban player
 app.post('/api/admin/players/:id/ban', requireAdmin, (req, res) => {
