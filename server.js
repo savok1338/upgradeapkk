@@ -965,15 +965,67 @@ app.post('/api/admin/config', requireAdmin, (req, res) => {
   if (update_message !== undefined) setAppConfig('update_message', update_message)
   if (force_update_enabled !== undefined) setAppConfig('force_update_enabled', force_update_enabled ? '1' : '0')
   if (econ_reset_at !== undefined) {
-    setAppConfig('econ_reset_at', String(Number(econ_reset_at) || Date.now()))
+    const marker = Number(econ_reset_at) || Date.now()
+    setAppConfig('econ_reset_at', String(marker))
+    // Reset all players in DB: starter balance 7 500 ₽, empty inventory, level 1, 0 stats (wiping leaderboard)
+    db.prepare(`
+      UPDATE players SET
+        balance = 750000,
+        pending_bonus = 0,
+        inventory_json = '[]',
+        pending_inventory_json = NULL,
+        level = 1,
+        xp = 0,
+        upgrades_count = 0,
+        won_count = 0,
+        biggest_win = 0,
+        quests_json = '[]',
+        quest_stats_json = '{}',
+        economy_reset_at = ?
+    `).run(marker)
+    try { db.prepare('DELETE FROM wallet_transfers').run() } catch {}
+    try { db.prepare('DELETE FROM wallet_transactions').run() } catch {}
+    try { db.prepare('DELETE FROM promocode_redemptions').run() } catch {}
+
     db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
       'ADMIN_ECON_RESET',
-      `Economy reset marker bumped to ${getAppConfig('econ_reset_at', '0')} — all clients will wipe progress on next sync`,
-      Date.now()
+      `Full economy & leaderboard reset for ALL players (balance=7500 RUB, inventory cleared, stats zeroed) marker=${marker}`,
+      marker
     )
   }
 
   res.json({ success: true, message: 'Настройки версий успешно обновлены' })
+})
+
+// Direct endpoint to reset full economy and leaderboard across all players
+app.post('/api/admin/economy/reset-all', requireAdmin, (req, res) => {
+  const marker = Date.now()
+  setAppConfig('econ_reset_at', String(marker))
+  db.prepare(`
+    UPDATE players SET
+      balance = 750000,
+      pending_bonus = 0,
+      inventory_json = '[]',
+      pending_inventory_json = NULL,
+      level = 1,
+      xp = 0,
+      upgrades_count = 0,
+      won_count = 0,
+      biggest_win = 0,
+      quests_json = '[]',
+      quest_stats_json = '{}',
+      economy_reset_at = ?
+  `).run(marker)
+  try { db.prepare('DELETE FROM wallet_transfers').run() } catch {}
+  try { db.prepare('DELETE FROM wallet_transactions').run() } catch {}
+  try { db.prepare('DELETE FROM promocode_redemptions').run() } catch {}
+
+  db.prepare('INSERT INTO admin_logs (action, details, timestamp) VALUES (?, ?, ?)').run(
+    'ADMIN_ECON_RESET',
+    `Full economy & leaderboard reset for ALL players (balance=7500 RUB, inventory cleared, stats zeroed) marker=${marker}`,
+    marker
+  )
+  res.json({ success: true, message: 'Экономика и лидерборд всех игроков успешно сброшены', marker })
 })
 
 // ----------------------------------------------------
