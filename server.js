@@ -1042,6 +1042,14 @@ app.get('/admin', (req, res) => {
 // WEB VERSION OF THE GAME (browser-accessible at /play/)
 // ----------------------------------------------------
 app.get('/play', (req, res, next) => (req.originalUrl === '/play' ? res.redirect(301, '/play/') : next()))
+// Сжатые копии больших JSON (web/data/*.json.gz) — отдаём, если браузер поддерживает gzip
+app.get('/play/data/:file', (req, res, next) => {
+  const f = path.join(__dirname, 'web', 'data', path.basename(req.params.file) + '.gz')
+  if (!/\.json$/.test(req.params.file) || !/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return next()
+  res.sendFile(f, { headers: { 'Content-Encoding': 'gzip', 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=3600', Vary: 'Accept-Encoding' } }, (err) => {
+    if (err && !res.headersSent) next()
+  })
+})
 app.use('/play', express.static(path.join(__dirname, 'web'), { maxAge: '1h', index: 'index.html' }))
 
 app.listen(PORT, '0.0.0.0', () => {
