@@ -1038,6 +1038,12 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'))
 })
 
+// ----------------------------------------------------
+// WEB VERSION OF THE GAME (browser-accessible at /play/)
+// ----------------------------------------------------
+app.get('/play', (req, res, next) => (req.originalUrl === '/play' ? res.redirect(301, '/play/') : next()))
+app.use('/play', express.static(path.join(__dirname, 'web'), { maxAge: '1h', index: 'index.html' }))
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[CS2 Upgrader Server] Running on http://0.0.0.0:${PORT}`)
   console.log(`[Admin Panel] Accessible at http://localhost:${PORT}/admin (Key: ${ADMIN_SECRET})`)
